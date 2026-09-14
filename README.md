@@ -8,14 +8,15 @@
 2. Cấp quyền **hiển thị trên ứng dụng khác**.
 3. Đồng ý **chia sẻ toàn bộ màn hình**.
 4. Mở game Trung Quốc và chạm bong bóng **译**.
-5. Ứng dụng nhận dạng từng vùng chữ Trung rồi phủ bản dịch tiếng Việt ngay đúng vị trí đó.
-6. Chạm lại **译** khi màn hình game thay đổi để cập nhật bản dịch.
+5. Ứng dụng chụp màn hình mới, nhận dạng từng vùng chữ rồi phủ tiếng Việt trong đúng khung chữ gốc.
+6. Khi bản dịch hiện, bong bóng đổi thành **×**. Chạm **×** để ẩn toàn bộ bản dịch.
+7. Chạm **译** lần nữa khi muốn dịch màn hình mới.
 
-Lớp chữ dịch không chặn thao tác chạm vào game. Ảnh chụp chỉ được xử lý trong điện thoại, không lưu thành tệp và không tải lên máy chủ riêng.
+Phiên bản 1.2.0 bù tỉ lệ và phần viền màn hình ngang, giới hạn kích thước mỗi ô theo vùng OCR gốc, tự co chữ và loại bỏ các vùng OCR trùng nhau.
 
 ## Tải APK
 
-Mở mục [Releases](https://github.com/NinhNV0000/bong-bong-dich/releases/latest) và tải tệp `BongBongDich-v1.1.0-arm64.apk`.
+Mở mục [Releases](https://github.com/NinhNV0000/bong-bong-dich/releases/latest) và tải tệp `BongBongDich-v1.2.0-arm64.apk`.
 
 ## Yêu cầu
 

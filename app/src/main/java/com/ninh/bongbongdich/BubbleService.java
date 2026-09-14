@@ -26,6 +26,7 @@ import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -71,14 +72,17 @@ public class BubbleService extends Service {
 
     private static final String CHANNEL_ID = "bubble_translate_channel";
     private static final int NOTIFICATION_ID = 2409;
-    private static final int MAX_REGIONS = 30;
+    private static final int MAX_REGIONS = 24;
 
     private WindowManager windowManager;
     private TextView bubbleView;
+    private GradientDrawable bubbleBackground;
     private WindowManager.LayoutParams bubbleParams;
 
     private FrameLayout translationLayer;
     private WindowManager.LayoutParams translationLayerParams;
+    private final List<Rect> placedTranslationBounds = new ArrayList<>();
+    private boolean translationsVisible;
 
     private MediaProjection mediaProjection;
     private MediaProjection.Callback mediaProjectionCallback;
@@ -227,7 +231,7 @@ public class BubbleService extends Service {
                 .apply();
 
         warmUpTranslationModel();
-        showToast("Đã bật. Chạm 译 để dịch ngay trên chữ Trung.");
+        showToast("Chạm 译 để dịch, chạm × để tắt bản dịch.");
     }
 
     private ImageReader createImageReader(int width, int height) {
@@ -304,6 +308,7 @@ public class BubbleService extends Service {
         if (cleaningUp) {
             bitmap.recycle();
             busy = false;
+            updateBubbleVisual();
             return;
         }
 
@@ -325,6 +330,7 @@ public class BubbleService extends Service {
 
                     if (regions.isEmpty()) {
                         busy = false;
+                        updateBubbleVisual();
                         showToast("Không tìm thấy chữ Trung trên màn hình.");
                         return;
                     }
@@ -352,6 +358,11 @@ public class BubbleService extends Service {
             Rect bounds = block.getBoundingBox();
 
             if (source.isEmpty() || bounds == null || !containsChinese(source)) {
+                continue;
+            }
+
+            // Bỏ dòng điều khoản/quảng cáo cực dài nhưng rất nhỏ ở chân màn hình.
+            if (source.length() > 140 && bounds.height() < imageHeight * 0.09f) {
                 continue;
             }
 
@@ -432,8 +443,10 @@ public class BubbleService extends Service {
                 }
 
                 if (translated != null && !translated.trim().isEmpty()) {
-                    addTranslationAtPosition(region, translated.trim());
-                    displayedCount.incrementAndGet();
+                    String compact = compactTranslation(region.source, translated);
+                    if (addTranslationAtPosition(region, compact)) {
+                        displayedCount.incrementAndGet();
+                    }
                 }
             });
         }
@@ -444,10 +457,41 @@ public class BubbleService extends Service {
             }
 
             busy = false;
+            updateBubbleVisual();
+
             if (displayedCount.get() == 0) {
                 showToast("Không dịch được nội dung. Hãy thử lại.");
+            } else {
+                showToast("Đã dịch. Chạm × để ẩn.");
             }
         });
+    }
+
+    private String compactTranslation(String source, String translated) {
+        String key = source.replaceAll("[\\[\\]【】（）()\\s]", "");
+        switch (key) {
+            case "活动":
+                return "Sự kiện";
+            case "公告":
+                return "Tin";
+            case "领取":
+                return "Nhận";
+            case "充值":
+                return "Nạp";
+            case "购买":
+                return "Mua";
+            case "返回":
+                return "Về";
+            case "确定":
+            case "确认":
+                return "OK";
+            case "取消":
+                return "Hủy";
+            default:
+                return translated.trim()
+                        .replaceAll("^\\[\\s*", "")
+                        .replaceAll("\\s*\\]$", "");
+        }
     }
 
     private void createTranslationLayer() {
@@ -458,7 +502,9 @@ public class BubbleService extends Service {
         translationLayer = new FrameLayout(this);
         translationLayer.setBackgroundColor(Color.TRANSPARENT);
         translationLayer.setVisibility(View.INVISIBLE);
-        translationLayer.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        translationLayer.setImportantForAccessibility(
+                View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        );
 
         translationLayerParams = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -471,94 +517,169 @@ public class BubbleService extends Service {
                 PixelFormat.TRANSLUCENT
         );
         translationLayerParams.gravity = Gravity.TOP | Gravity.START;
-
-        // Android 12+ chỉ cho thao tác xuyên qua lớp phủ không chạm khi độ mờ <= 0,8.
         translationLayerParams.alpha = 0.79f;
 
         windowManager.addView(translationLayer, translationLayerParams);
     }
 
-    private void addTranslationAtPosition(OcrRegion region, String translated) {
-        if (translationLayer == null || cleaningUp) {
-            return;
+    private boolean addTranslationAtPosition(OcrRegion region, String translated) {
+        if (translationLayer == null || cleaningUp || TextUtils.isEmpty(translated)) {
+            return false;
         }
 
-        float scaleX = screenWidth / (float) Math.max(1, region.imageWidth);
-        float scaleY = screenHeight / (float) Math.max(1, region.imageHeight);
-
-        int left = Math.round(region.bounds.left * scaleX);
-        int top = Math.round(region.bounds.top * scaleY);
-        int originalWidth = Math.max(dp(48), Math.round(region.bounds.width() * scaleX));
-
-        left = clamp(left, dp(2), Math.max(dp(2), screenWidth - dp(54)));
-        top = clamp(top, dp(4), Math.max(dp(4), screenHeight - dp(44)));
-
-        int preferredWidth = Math.max(dp(100), originalWidth);
-        if (translated.length() > 12) {
-            preferredWidth = Math.max(preferredWidth, Math.min(dp(300), originalWidth + dp(80)));
+        Rect mappedBounds = mapRegionToOverlay(region);
+        if (mappedBounds.width() < 2 || mappedBounds.height() < 2) {
+            return false;
         }
-        int availableWidth = Math.max(dp(52), screenWidth - left - dp(4));
-        int labelWidth = Math.min(preferredWidth, availableWidth);
+
+        if (overlapsExistingRegion(mappedBounds)) {
+            return false;
+        }
 
         TextView label = new TextView(this);
         label.setText(translated);
         label.setTextColor(Color.WHITE);
         label.setTypeface(Typeface.DEFAULT_BOLD);
-        label.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        label.setPadding(dp(7), dp(4), dp(7), dp(4));
-        label.setLineSpacing(0, 1.05f);
+        label.setGravity(region.lineCount > 1
+                ? Gravity.START | Gravity.CENTER_VERTICAL
+                : Gravity.CENTER);
+        label.setPadding(dp(2), 0, dp(2), 0);
+        label.setLineSpacing(0, 0.96f);
         label.setIncludeFontPadding(false);
-
-        float sourceLineHeightPx =
-                region.bounds.height() * scaleY / Math.max(1, region.lineCount);
-        float estimatedSp = sourceLineHeightPx
-                / getResources().getDisplayMetrics().scaledDensity
-                * 0.72f;
-        float fontSizeSp = Math.max(12f, Math.min(18f, estimatedSp));
-        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp);
+        label.setMaxLines(Math.max(1, region.lineCount + 1));
+        label.setEllipsize(TextUtils.TruncateAt.END);
+        label.setAutoSizeTextTypeUniformWithConfiguration(
+                6,
+                18,
+                1,
+                TypedValue.COMPLEX_UNIT_SP
+        );
 
         GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.parseColor("#ED17131F"));
-        background.setCornerRadius(dp(7));
-        background.setStroke(dp(1), Color.parseColor("#9B8BFF"));
+        background.setColor(Color.parseColor("#F21A1722"));
+        background.setCornerRadius(dp(4));
+        background.setStroke(dp(1), Color.parseColor("#8F7BFF"));
         label.setBackground(background);
-        label.setElevation(dp(3));
 
         FrameLayout.LayoutParams labelParams = new FrameLayout.LayoutParams(
-                labelWidth,
-                FrameLayout.LayoutParams.WRAP_CONTENT
+                mappedBounds.width(),
+                mappedBounds.height()
         );
-        labelParams.leftMargin = left;
-        labelParams.topMargin = top;
+        labelParams.leftMargin = mappedBounds.left;
+        labelParams.topMargin = mappedBounds.top;
 
         translationLayer.addView(label, labelParams);
+        placedTranslationBounds.add(new Rect(mappedBounds));
+        translationsVisible = true;
         translationLayer.setVisibility(View.VISIBLE);
+        updateBubbleVisual();
+        return true;
+    }
+
+    private Rect mapRegionToOverlay(OcrRegion region) {
+        int overlayWidth = translationLayer.getWidth() > 0
+                ? translationLayer.getWidth()
+                : screenWidth;
+        int overlayHeight = translationLayer.getHeight() > 0
+                ? translationLayer.getHeight()
+                : screenHeight;
+
+        float captureScale = Math.min(
+                region.imageWidth / (float) Math.max(1, overlayWidth),
+                region.imageHeight / (float) Math.max(1, overlayHeight)
+        );
+        if (captureScale <= 0f) {
+            captureScale = 1f;
+        }
+
+        float renderedWidth = overlayWidth * captureScale;
+        float renderedHeight = overlayHeight * captureScale;
+        float captureOffsetX = (region.imageWidth - renderedWidth) / 2f;
+        float captureOffsetY = (region.imageHeight - renderedHeight) / 2f;
+
+        int[] layerLocation = new int[]{0, 0};
+        translationLayer.getLocationOnScreen(layerLocation);
+
+        int left = Math.round((region.bounds.left - captureOffsetX) / captureScale)
+                - layerLocation[0];
+        int top = Math.round((region.bounds.top - captureOffsetY) / captureScale)
+                - layerLocation[1];
+        int right = Math.round((region.bounds.right - captureOffsetX) / captureScale)
+                - layerLocation[0];
+        int bottom = Math.round((region.bounds.bottom - captureOffsetY) / captureScale)
+                - layerLocation[1];
+
+        left = clamp(left, 0, Math.max(0, overlayWidth - 1));
+        top = clamp(top, 0, Math.max(0, overlayHeight - 1));
+        right = clamp(right, left + 1, Math.max(left + 1, overlayWidth));
+        bottom = clamp(bottom, top + 1, Math.max(top + 1, overlayHeight));
+
+        return new Rect(left, top, right, bottom);
+    }
+
+    private boolean overlapsExistingRegion(Rect candidate) {
+        long candidateArea = Math.max(1L, (long) candidate.width() * candidate.height());
+
+        for (Rect existing : placedTranslationBounds) {
+            Rect intersection = new Rect();
+            if (!intersection.setIntersect(candidate, existing)) {
+                continue;
+            }
+
+            long existingArea = Math.max(1L, (long) existing.width() * existing.height());
+            long intersectionArea =
+                    (long) intersection.width() * intersection.height();
+            float overlapRatio = intersectionArea
+                    / (float) Math.min(candidateArea, existingArea);
+
+            if (overlapRatio > 0.55f) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void clearTranslations() {
+        placedTranslationBounds.clear();
+        translationsVisible = false;
+
         if (translationLayer != null) {
             translationLayer.removeAllViews();
             translationLayer.setVisibility(View.INVISIBLE);
         }
+
+        updateBubbleVisual();
+    }
+
+    private void handleBubbleTap() {
+        if (translationsVisible || busy) {
+            boolean wasVisible = translationsVisible;
+            captureSequence++;
+            captureNextFrame = false;
+            busy = false;
+            clearTranslations();
+            showBubble();
+            showToast(wasVisible ? "Đã tắt bản dịch." : "Đã hủy dịch.");
+            return;
+        }
+
+        requestCapture();
     }
 
     private void requestCapture() {
-        if (busy) {
-            showToast("Đang xử lý bản dịch trước…");
-            return;
-        }
         if (imageReader == null || virtualDisplay == null) {
             showFailure("Chưa sẵn sàng chụp màn hình. Hãy bật lại bong bóng.");
             return;
         }
 
+        clearTranslations();
         busy = true;
         captureNextFrame = false;
         int sequence = ++captureSequence;
+        updateBubbleVisual();
 
-        clearTranslations();
         hideBubble();
-        showToast("Đang đọc chữ trên màn hình…");
+        showToast("Đang cập nhật ảnh màn hình…");
 
         mainHandler.postDelayed(() -> {
             if (cleaningUp || sequence != captureSequence) {
@@ -572,7 +693,7 @@ public class BubbleService extends Service {
                     showFailure("Không chụp được màn hình. Hãy thử lại.");
                 }
             }, 2000);
-        }, 260);
+        }, 300);
     }
 
     private void createBubble() {
@@ -581,19 +702,16 @@ public class BubbleService extends Service {
         }
 
         bubbleView = new TextView(this);
-        bubbleView.setText("译");
         bubbleView.setTextColor(Color.WHITE);
         bubbleView.setTextSize(25);
         bubbleView.setTypeface(Typeface.DEFAULT_BOLD);
         bubbleView.setGravity(Gravity.CENTER);
         bubbleView.setIncludeFontPadding(false);
-        bubbleView.setContentDescription("Chạm để dịch, kéo để di chuyển");
 
-        GradientDrawable background = new GradientDrawable();
-        background.setShape(GradientDrawable.OVAL);
-        background.setColor(Color.parseColor("#6847F5"));
-        background.setStroke(dp(2), Color.parseColor("#66FFFFFF"));
-        bubbleView.setBackground(background);
+        bubbleBackground = new GradientDrawable();
+        bubbleBackground.setShape(GradientDrawable.OVAL);
+        bubbleBackground.setStroke(dp(2), Color.parseColor("#66FFFFFF"));
+        bubbleView.setBackground(bubbleBackground);
         bubbleView.setElevation(dp(9));
 
         bubbleParams = new WindowManager.LayoutParams(
@@ -609,7 +727,30 @@ public class BubbleService extends Service {
         bubbleParams.y = dp(180);
 
         attachBubbleTouchHandler();
+        updateBubbleVisual();
         windowManager.addView(bubbleView, bubbleParams);
+    }
+
+    private void updateBubbleVisual() {
+        if (bubbleView == null || bubbleBackground == null) {
+            return;
+        }
+
+        if (translationsVisible) {
+            bubbleView.setText("×");
+            bubbleView.setContentDescription("Chạm để tắt bản dịch");
+            bubbleBackground.setColor(Color.parseColor("#D64545"));
+        } else if (busy) {
+            bubbleView.setText("…");
+            bubbleView.setContentDescription("Chạm để hủy dịch");
+            bubbleBackground.setColor(Color.parseColor("#D88A20"));
+        } else {
+            bubbleView.setText("译");
+            bubbleView.setContentDescription("Chạm để dịch, kéo để di chuyển");
+            bubbleBackground.setColor(Color.parseColor("#6847F5"));
+        }
+
+        bubbleView.invalidate();
     }
 
     private void attachBubbleTouchHandler() {
@@ -660,7 +801,7 @@ public class BubbleService extends Service {
 
                     case MotionEvent.ACTION_UP:
                         if (!moved) {
-                            requestCapture();
+                            handleBubbleTap();
                         }
                         return true;
 
@@ -682,6 +823,7 @@ public class BubbleService extends Service {
 
     private void showBubble() {
         if (bubbleView != null) {
+            updateBubbleVisual();
             bubbleView.setVisibility(View.VISIBLE);
         }
     }
@@ -689,8 +831,8 @@ public class BubbleService extends Service {
     private void showFailure(String message) {
         busy = false;
         captureNextFrame = false;
-        showBubble();
         clearTranslations();
+        showBubble();
         showToast(message);
     }
 
@@ -811,14 +953,14 @@ public class BubbleService extends Service {
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Bong Bóng Dịch")
-                .setContentText("Chạm 译 để phủ bản dịch ngay lên chữ Trung")
+                .setContentText("译: dịch màn hình • ×: tắt bản dịch")
                 .setContentIntent(openPendingIntent)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .addAction(
                         android.R.drawable.ic_menu_close_clear_cancel,
-                        "Tắt",
+                        "Tắt ứng dụng",
                         stopPendingIntent
                 )
                 .build();
