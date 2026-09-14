@@ -14,11 +14,13 @@
 
 ## Tải APK
 
-Mở mục [Releases](https://github.com/NinhNV0000/bong-bong-dich/releases) và tải tệp `BongBongDich-v1.0.0.apk`.
+Mở mục [Releases](https://github.com/NinhNV0000/bong-bong-dich/releases/latest) và tải tệp `BongBongDich-v1.0.1-arm64.apk`.
+
+Bản v1.0.1 đã được tối ưu cho điện thoại Android 64-bit để giảm đáng kể dung lượng tải xuống.
 
 ## Yêu cầu
 
-- Android 8.0 trở lên.
+- Android 8.0 trở lên, kiến trúc ARM64.
 - Cho phép ứng dụng hiển thị trên ứng dụng khác.
 - Đồng ý chia sẻ màn hình mỗi khi bật bong bóng.
 - Game không chặn chụp màn hình bằng chế độ bảo mật.
