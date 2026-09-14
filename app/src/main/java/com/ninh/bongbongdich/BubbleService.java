@@ -5,9 +5,6 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
-import android.content.ClipData;
-import android.content.ClipboardManager;
-import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
@@ -30,14 +27,14 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
+import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -45,17 +42,23 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
+import com.google.android.gms.tasks.Task;
+import com.google.android.gms.tasks.Tasks;
 import com.google.mlkit.common.model.DownloadConditions;
 import com.google.mlkit.nl.translate.TranslateLanguage;
 import com.google.mlkit.nl.translate.Translation;
 import com.google.mlkit.nl.translate.Translator;
 import com.google.mlkit.nl.translate.TranslatorOptions;
 import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class BubbleService extends Service {
 
@@ -68,17 +71,14 @@ public class BubbleService extends Service {
 
     private static final String CHANNEL_ID = "bubble_translate_channel";
     private static final int NOTIFICATION_ID = 2409;
+    private static final int MAX_REGIONS = 30;
 
     private WindowManager windowManager;
     private TextView bubbleView;
     private WindowManager.LayoutParams bubbleParams;
 
-    private View panelView;
-    private WindowManager.LayoutParams panelParams;
-    private TextView sourceTextView;
-    private TextView translatedTextView;
-    private String currentTranslation = "";
-    private boolean panelAdded;
+    private FrameLayout translationLayer;
+    private WindowManager.LayoutParams translationLayerParams;
 
     private MediaProjection mediaProjection;
     private MediaProjection.Callback mediaProjectionCallback;
@@ -218,14 +218,16 @@ public class BubbleService extends Service {
             throw new IllegalStateException("Không tạo được màn hình ảo");
         }
 
+        createTranslationLayer();
         createBubble();
+
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit()
                 .putBoolean(KEY_RUNNING, true)
                 .apply();
 
         warmUpTranslationModel();
-        showToast("Đã bật bong bóng dịch. Chạm 译 để dịch.");
+        showToast("Đã bật. Chạm 译 để dịch ngay trên chữ Trung.");
     }
 
     private ImageReader createImageReader(int width, int height) {
@@ -305,24 +307,29 @@ public class BubbleService extends Service {
             return;
         }
 
+        final int imageWidth = bitmap.getWidth();
+        final int imageHeight = bitmap.getHeight();
         InputImage inputImage = InputImage.fromBitmap(bitmap, 0);
+
         textRecognizer.process(inputImage)
                 .addOnSuccessListener(result -> {
                     if (cleaningUp) {
                         return;
                     }
 
-                    String source = cleanRecognizedText(result.getText());
-                    if (source.isEmpty()) {
+                    List<OcrRegion> regions = extractChineseRegions(
+                            result,
+                            imageWidth,
+                            imageHeight
+                    );
+
+                    if (regions.isEmpty()) {
                         busy = false;
-                        showPanel(
-                                "Không tìm thấy chữ Trung",
-                                "Hãy đóng bảng này, để chữ trong game hiện rõ rồi chạm bong bóng lần nữa."
-                        );
+                        showToast("Không tìm thấy chữ Trung trên màn hình.");
                         return;
                     }
 
-                    translateText(source);
+                    translateRegions(regions);
                 })
                 .addOnFailureListener(exception ->
                         showFailure("Không nhận dạng được chữ: " + readableError(exception)))
@@ -331,6 +338,49 @@ public class BubbleService extends Service {
                         bitmap.recycle();
                     }
                 });
+    }
+
+    private List<OcrRegion> extractChineseRegions(
+            Text result,
+            int imageWidth,
+            int imageHeight
+    ) {
+        List<OcrRegion> regions = new ArrayList<>();
+
+        for (Text.TextBlock block : result.getTextBlocks()) {
+            String source = cleanRecognizedText(block.getText());
+            Rect bounds = block.getBoundingBox();
+
+            if (source.isEmpty() || bounds == null || !containsChinese(source)) {
+                continue;
+            }
+
+            regions.add(new OcrRegion(
+                    source,
+                    new Rect(bounds),
+                    imageWidth,
+                    imageHeight,
+                    Math.max(1, block.getLines().size())
+            ));
+
+            if (regions.size() >= MAX_REGIONS) {
+                break;
+            }
+        }
+
+        return regions;
+    }
+
+    private boolean containsChinese(String text) {
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if ((character >= '\u3400' && character <= '\u4DBF')
+                    || (character >= '\u4E00' && character <= '\u9FFF')
+                    || (character >= '\uF900' && character <= '\uFAFF')) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String cleanRecognizedText(String text) {
@@ -342,51 +392,154 @@ public class BubbleService extends Service {
                 .replaceAll("\\n{3,}", "\n\n");
     }
 
-    private void translateText(String source) {
-        String textForTranslation = source.length() > 5000
-                ? source.substring(0, 5000)
-                : source;
+    private void translateRegions(List<OcrRegion> regions) {
+        clearTranslations();
 
         if (modelReady) {
-            performTranslation(source, textForTranslation);
+            performRegionTranslations(regions);
             return;
         }
 
-        showPanel(source, "Đang tải bộ dịch Trung–Việt lần đầu…\nHãy giữ kết nối mạng.");
+        showToast("Đang tải bộ dịch Trung–Việt lần đầu…");
         DownloadConditions conditions = new DownloadConditions.Builder().build();
         translator.downloadModelIfNeeded(conditions)
                 .addOnSuccessListener(unused -> {
                     modelReady = true;
-                    performTranslation(source, textForTranslation);
+                    performRegionTranslations(regions);
                 })
                 .addOnFailureListener(exception ->
-                        showFailureWithSource(
-                                source,
-                                "Không tải được bộ dịch. Hãy kiểm tra mạng rồi thử lại.\n"
-                                        + readableError(exception)
-                        ));
+                        showFailure("Không tải được bộ dịch. Hãy kiểm tra mạng rồi thử lại."));
     }
 
-    private void performTranslation(String source, String textForTranslation) {
-        showPanel(source, "Đang dịch…");
-        translator.translate(textForTranslation)
-                .addOnSuccessListener(translated -> {
-                    busy = false;
-                    showPanel(source, translated == null || translated.trim().isEmpty()
-                            ? "Không có kết quả dịch."
-                            : translated.trim());
-                })
-                .addOnFailureListener(exception ->
-                        showFailureWithSource(
-                                source,
-                                "Dịch thất bại. Hãy thử lại.\n" + readableError(exception)
-                        ));
+    private void performRegionTranslations(List<OcrRegion> regions) {
+        showToast("Đang dịch " + regions.size() + " vùng chữ…");
+
+        int generation = captureSequence;
+        List<Task<String>> tasks = new ArrayList<>();
+        AtomicInteger displayedCount = new AtomicInteger(0);
+
+        for (OcrRegion region : regions) {
+            String source = region.source.length() > 1000
+                    ? region.source.substring(0, 1000)
+                    : region.source;
+
+            Task<String> task = translator.translate(source);
+            tasks.add(task);
+
+            task.addOnSuccessListener(translated -> {
+                if (cleaningUp || generation != captureSequence) {
+                    return;
+                }
+
+                if (translated != null && !translated.trim().isEmpty()) {
+                    addTranslationAtPosition(region, translated.trim());
+                    displayedCount.incrementAndGet();
+                }
+            });
+        }
+
+        Tasks.whenAllComplete(tasks).addOnCompleteListener(unused -> {
+            if (cleaningUp || generation != captureSequence) {
+                return;
+            }
+
+            busy = false;
+            if (displayedCount.get() == 0) {
+                showToast("Không dịch được nội dung. Hãy thử lại.");
+            }
+        });
     }
 
-    private void warmUpTranslationModel() {
-        DownloadConditions conditions = new DownloadConditions.Builder().build();
-        translator.downloadModelIfNeeded(conditions)
-                .addOnSuccessListener(unused -> modelReady = true);
+    private void createTranslationLayer() {
+        if (translationLayer != null) {
+            return;
+        }
+
+        translationLayer = new FrameLayout(this);
+        translationLayer.setBackgroundColor(Color.TRANSPARENT);
+        translationLayer.setVisibility(View.INVISIBLE);
+        translationLayer.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+
+        translationLayerParams = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+        );
+        translationLayerParams.gravity = Gravity.TOP | Gravity.START;
+
+        // Android 12+ chỉ cho thao tác xuyên qua lớp phủ không chạm khi độ mờ <= 0,8.
+        translationLayerParams.alpha = 0.79f;
+
+        windowManager.addView(translationLayer, translationLayerParams);
+    }
+
+    private void addTranslationAtPosition(OcrRegion region, String translated) {
+        if (translationLayer == null || cleaningUp) {
+            return;
+        }
+
+        float scaleX = screenWidth / (float) Math.max(1, region.imageWidth);
+        float scaleY = screenHeight / (float) Math.max(1, region.imageHeight);
+
+        int left = Math.round(region.bounds.left * scaleX);
+        int top = Math.round(region.bounds.top * scaleY);
+        int originalWidth = Math.max(dp(48), Math.round(region.bounds.width() * scaleX));
+
+        left = clamp(left, dp(2), Math.max(dp(2), screenWidth - dp(54)));
+        top = clamp(top, dp(4), Math.max(dp(4), screenHeight - dp(44)));
+
+        int preferredWidth = Math.max(dp(100), originalWidth);
+        if (translated.length() > 12) {
+            preferredWidth = Math.max(preferredWidth, Math.min(dp(300), originalWidth + dp(80)));
+        }
+        int availableWidth = Math.max(dp(52), screenWidth - left - dp(4));
+        int labelWidth = Math.min(preferredWidth, availableWidth);
+
+        TextView label = new TextView(this);
+        label.setText(translated);
+        label.setTextColor(Color.WHITE);
+        label.setTypeface(Typeface.DEFAULT_BOLD);
+        label.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        label.setPadding(dp(7), dp(4), dp(7), dp(4));
+        label.setLineSpacing(0, 1.05f);
+        label.setIncludeFontPadding(false);
+
+        float sourceLineHeightPx =
+                region.bounds.height() * scaleY / Math.max(1, region.lineCount);
+        float estimatedSp = sourceLineHeightPx
+                / getResources().getDisplayMetrics().scaledDensity
+                * 0.72f;
+        float fontSizeSp = Math.max(12f, Math.min(18f, estimatedSp));
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp);
+
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(Color.parseColor("#ED17131F"));
+        background.setCornerRadius(dp(7));
+        background.setStroke(dp(1), Color.parseColor("#9B8BFF"));
+        label.setBackground(background);
+        label.setElevation(dp(3));
+
+        FrameLayout.LayoutParams labelParams = new FrameLayout.LayoutParams(
+                labelWidth,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+        );
+        labelParams.leftMargin = left;
+        labelParams.topMargin = top;
+
+        translationLayer.addView(label, labelParams);
+        translationLayer.setVisibility(View.VISIBLE);
+    }
+
+    private void clearTranslations() {
+        if (translationLayer != null) {
+            translationLayer.removeAllViews();
+            translationLayer.setVisibility(View.INVISIBLE);
+        }
     }
 
     private void requestCapture() {
@@ -403,7 +556,7 @@ public class BubbleService extends Service {
         captureNextFrame = false;
         int sequence = ++captureSequence;
 
-        hidePanel();
+        clearTranslations();
         hideBubble();
         showToast("Đang đọc chữ trên màn hình…");
 
@@ -456,13 +609,7 @@ public class BubbleService extends Service {
         bubbleParams.y = dp(180);
 
         attachBubbleTouchHandler();
-
-        try {
-            windowManager.addView(bubbleView, bubbleParams);
-        } catch (Exception exception) {
-            bubbleView = null;
-            throw exception;
-        }
+        windowManager.addView(bubbleView, bubbleParams);
     }
 
     private void attachBubbleTouchHandler() {
@@ -527,197 +674,6 @@ public class BubbleService extends Service {
         });
     }
 
-    private void showPanel(String source, String translated) {
-        if (cleaningUp) {
-            return;
-        }
-
-        mainHandler.post(() -> {
-            if (cleaningUp) {
-                return;
-            }
-
-            if (panelView == null) {
-                createPanelView();
-            }
-
-            sourceTextView.setText(source);
-            translatedTextView.setText(translated);
-            currentTranslation = translated == null ? "" : translated;
-
-            if (!panelAdded) {
-                try {
-                    windowManager.addView(panelView, panelParams);
-                    panelAdded = true;
-                } catch (Exception exception) {
-                    showToast("Không hiển thị được bảng dịch.");
-                }
-            }
-        });
-    }
-
-    private void createPanelView() {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(18), dp(14), dp(18), dp(16));
-        card.setElevation(dp(12));
-
-        GradientDrawable cardBackground = new GradientDrawable();
-        cardBackground.setColor(Color.parseColor("#FAFFFFFF"));
-        cardBackground.setCornerRadius(dp(20));
-        cardBackground.setStroke(dp(1), Color.parseColor("#DDD7EE"));
-        card.setBackground(cardBackground);
-
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView title = new TextView(this);
-        title.setText("Bản dịch Trung → Việt");
-        title.setTextColor(Color.parseColor("#211D31"));
-        title.setTextSize(17);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        header.addView(title, new LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-        ));
-
-        TextView copyButton = makePanelAction("Sao chép");
-        copyButton.setOnClickListener(view -> copyTranslation());
-        header.addView(copyButton);
-
-        TextView closeButton = makePanelAction("Đóng");
-        closeButton.setOnClickListener(view -> hidePanel());
-        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        closeParams.setMarginStart(dp(8));
-        header.addView(closeButton, closeParams);
-
-        card.addView(header);
-
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.setFillViewport(false);
-        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                Math.min(dp(330), Math.max(dp(210), screenHeight - dp(230)))
-        );
-        scrollParams.topMargin = dp(10);
-
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-
-        TextView sourceLabel = makeLabel("TIẾNG TRUNG");
-        content.addView(sourceLabel);
-
-        sourceTextView = makeBodyText();
-        LinearLayout.LayoutParams sourceParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        sourceParams.topMargin = dp(5);
-        content.addView(sourceTextView, sourceParams);
-
-        View divider = new View(this);
-        divider.setBackgroundColor(Color.parseColor("#E7E2F0"));
-        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(1)
-        );
-        dividerParams.topMargin = dp(14);
-        dividerParams.bottomMargin = dp(14);
-        content.addView(divider, dividerParams);
-
-        TextView translatedLabel = makeLabel("TIẾNG VIỆT");
-        content.addView(translatedLabel);
-
-        translatedTextView = makeBodyText();
-        translatedTextView.setTextColor(Color.parseColor("#392A8E"));
-        translatedTextView.setTextSize(17);
-        LinearLayout.LayoutParams translatedParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        translatedParams.topMargin = dp(5);
-        content.addView(translatedTextView, translatedParams);
-
-        scrollView.addView(content);
-        card.addView(scrollView, scrollParams);
-
-        panelView = card;
-        panelParams = new WindowManager.LayoutParams(
-                Math.max(dp(280), screenWidth - dp(24)),
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT
-        );
-        panelParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        panelParams.y = dp(58);
-    }
-
-    private TextView makePanelAction(String text) {
-        TextView action = new TextView(this);
-        action.setText(text);
-        action.setTextColor(Color.parseColor("#6847F5"));
-        action.setTextSize(14);
-        action.setTypeface(Typeface.DEFAULT_BOLD);
-        action.setGravity(Gravity.CENTER);
-        action.setPadding(dp(9), dp(7), dp(9), dp(7));
-
-        GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.parseColor("#EEEAFE"));
-        background.setCornerRadius(dp(10));
-        action.setBackground(background);
-        return action;
-    }
-
-    private TextView makeLabel(String text) {
-        TextView label = new TextView(this);
-        label.setText(text);
-        label.setTextColor(Color.parseColor("#716A80"));
-        label.setTextSize(12);
-        label.setTypeface(Typeface.DEFAULT_BOLD);
-        return label;
-    }
-
-    private TextView makeBodyText() {
-        TextView textView = new TextView(this);
-        textView.setTextColor(Color.parseColor("#211D31"));
-        textView.setTextSize(15);
-        textView.setLineSpacing(0, 1.12f);
-        return textView;
-    }
-
-    private void copyTranslation() {
-        if (currentTranslation.trim().isEmpty()
-                || currentTranslation.startsWith("Đang ")) {
-            showToast("Chưa có bản dịch để sao chép.");
-            return;
-        }
-
-        ClipboardManager clipboard =
-                (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        if (clipboard != null) {
-            clipboard.setPrimaryClip(ClipData.newPlainText("Bản dịch", currentTranslation));
-            showToast("Đã sao chép bản dịch.");
-        }
-    }
-
-    private void hidePanel() {
-        if (panelView != null && panelAdded) {
-            try {
-                windowManager.removeView(panelView);
-            } catch (Exception ignored) {
-                // View đã được gỡ.
-            }
-            panelAdded = false;
-        }
-    }
-
     private void hideBubble() {
         if (bubbleView != null) {
             bubbleView.setVisibility(View.INVISIBLE);
@@ -734,14 +690,14 @@ public class BubbleService extends Service {
         busy = false;
         captureNextFrame = false;
         showBubble();
-        showPanel("", message);
+        clearTranslations();
+        showToast(message);
     }
 
-    private void showFailureWithSource(String source, String message) {
-        busy = false;
-        captureNextFrame = false;
-        showBubble();
-        showPanel(source, message);
+    private void warmUpTranslationModel() {
+        DownloadConditions conditions = new DownloadConditions.Builder().build();
+        translator.downloadModelIfNeeded(conditions)
+                .addOnSuccessListener(unused -> modelReady = true);
     }
 
     private void updateScreenBounds() {
@@ -780,7 +736,11 @@ public class BubbleService extends Service {
             return;
         }
 
+        captureSequence++;
+        busy = false;
         captureNextFrame = false;
+        clearTranslations();
+
         ImageReader oldReader = imageReader;
         ImageReader newReader = createImageReader(screenWidth, screenHeight);
 
@@ -806,13 +766,6 @@ public class BubbleService extends Service {
                         Math.max(0, screenHeight - bubbleParams.height)
                 );
                 windowManager.updateViewLayout(bubbleView, bubbleParams);
-            }
-
-            if (panelView != null) {
-                panelParams.width = Math.max(dp(280), screenWidth - dp(24));
-                if (panelAdded) {
-                    windowManager.updateViewLayout(panelView, panelParams);
-                }
             }
         } catch (Exception exception) {
             newReader.setOnImageAvailableListener(null, null);
@@ -858,7 +811,7 @@ public class BubbleService extends Service {
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Bong Bóng Dịch")
-                .setContentText("Chạm bong bóng 译 để dịch chữ trên màn hình")
+                .setContentText("Chạm 译 để phủ bản dịch ngay lên chữ Trung")
                 .setContentIntent(openPendingIntent)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -912,13 +865,21 @@ public class BubbleService extends Service {
         cleaningUp = true;
         busy = false;
         captureNextFrame = false;
+        captureSequence++;
 
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit()
                 .putBoolean(KEY_RUNNING, false)
                 .apply();
 
-        hidePanel();
+        if (translationLayer != null) {
+            try {
+                windowManager.removeView(translationLayer);
+            } catch (Exception ignored) {
+                // View đã được gỡ.
+            }
+            translationLayer = null;
+        }
 
         if (bubbleView != null) {
             try {
@@ -965,5 +926,27 @@ public class BubbleService extends Service {
 
         stopForeground(STOP_FOREGROUND_REMOVE);
         super.onDestroy();
+    }
+
+    private static final class OcrRegion {
+        final String source;
+        final Rect bounds;
+        final int imageWidth;
+        final int imageHeight;
+        final int lineCount;
+
+        OcrRegion(
+                String source,
+                Rect bounds,
+                int imageWidth,
+                int imageHeight,
+                int lineCount
+        ) {
+            this.source = source;
+            this.bounds = bounds;
+            this.imageWidth = imageWidth;
+            this.imageHeight = imageHeight;
+            this.lineCount = lineCount;
+        }
     }
 }

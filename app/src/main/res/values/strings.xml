@@ -1,12 +1,12 @@
 <resources>
     <string name="app_name">Bong Bóng Dịch</string>
     <string name="app_title">Bong Bóng Dịch</string>
-    <string name="app_subtitle">Chạm một lần để dịch chữ Trung trong game sang tiếng Việt</string>
+    <string name="app_subtitle">Dịch chữ Trung và phủ tiếng Việt ngay đúng vị trí trong game</string>
     <string name="how_to_title">Cách dùng</string>
     <string name="how_to_steps">1. Bấm “Bật bong bóng dịch”
 2. Cho phép hiển thị trên ứng dụng khác
 3. Chọn chia sẻ “Toàn bộ màn hình”
-4. Vào game và chạm bong bóng 译 để dịch</string>
+4. Vào game và chạm 译; tiếng Việt sẽ phủ đúng vị trí chữ Trung</string>
     <string name="privacy_note">Ảnh màn hình chỉ được xử lý trong điện thoại, không lưu lại và không gửi tới máy chủ riêng.</string>
     <string name="status_off">Chưa bật bong bóng</string>
     <string name="button_start">Bật bong bóng dịch</string>

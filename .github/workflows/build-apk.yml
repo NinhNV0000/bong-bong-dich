@@ -39,26 +39,26 @@ jobs:
         run: gradle --no-daemon --stacktrace assembleRelease
 
       - name: Đổi tên APK
-        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.0.1-arm64.apk
+        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.1.0-arm64.apk
 
       - name: Lưu APK trong Actions
         uses: actions/upload-artifact@v4
         with:
-          name: BongBongDich-v1.0.1-arm64
-          path: BongBongDich-v1.0.1-arm64.apk
+          name: BongBongDich-v1.1.0-arm64
+          path: BongBongDich-v1.1.0-arm64.apk
           if-no-files-found: error
           retention-days: 90
 
-      - name: Tạo bản phát hành v1.0.1
+      - name: Tạo bản phát hành v1.1.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.1
-          name: Bong Bóng Dịch v1.0.1
+          tag_name: v1.1.0
+          name: Bong Bóng Dịch v1.1.0
           body: |
-            Bản nhẹ hơn dành cho điện thoại Android 64-bit hiện đại.
+            Bản dịch được phủ trực tiếp lên đúng vị trí của từng vùng chữ Trung trong game.
             
-            Có bong bóng nổi, chụp màn hình, nhận dạng chữ Trung và dịch sang tiếng Việt ngay trên thiết bị.
+            Lớp dịch không chặn thao tác chạm vào game. Chạm lại bong bóng 译 để cập nhật nội dung mới.
             Lần dịch đầu cần Internet để tải mô hình Trung–Việt.
-          files: BongBongDich-v1.0.1-arm64.apk
+          files: BongBongDich-v1.1.0-arm64.apk
           make_latest: true
           overwrite_files: true
