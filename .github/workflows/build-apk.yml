@@ -39,26 +39,27 @@ jobs:
         run: gradle --no-daemon --stacktrace assembleRelease
 
       - name: Đổi tên APK
-        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.3.0-arm64.apk
+        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.4.0-arm64.apk
 
       - name: Lưu APK trong Actions
         uses: actions/upload-artifact@v4
         with:
-          name: BongBongDich-v1.3.0-arm64
-          path: BongBongDich-v1.3.0-arm64.apk
+          name: BongBongDich-v1.4.0-arm64
+          path: BongBongDich-v1.4.0-arm64.apk
           if-no-files-found: error
           retention-days: 90
 
-      - name: Tạo bản phát hành v1.3.0
+      - name: Tạo bản phát hành v1.4.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.3.0
-          name: Bong Bóng Dịch v1.3.0
+          tag_name: v1.4.0
+          name: Bong Bóng Dịch v1.4.0
           body: |
-            Đồng bộ ảnh chụp và lớp phủ theo kích thước thật sau mỗi lần xoay màn hình.
+            Nâng chất lượng dịch bằng bộ dịch online và từ điển thuật ngữ game Trung–Việt.
             
-            Chặn ảnh cũ sai chiều để không còn dồn bản dịch xuống mép dưới.
-            Ép chụp toàn bộ màn hình, giữ ô dịch đúng vị trí và nút 译 / × để bật tắt.
-          files: BongBongDich-v1.3.0-arm64.apk
+            Tự sửa các từ game như lực chiến, phó bản, đội hình, chiêu mộ, tăng sao và quét.
+            Khi dịch online không dùng được, ứng dụng tự chuyển sang ML Kit offline.
+            Giữ bản sửa tọa độ màn hình ngang và nút 译 / × để bật tắt.
+          files: BongBongDich-v1.4.0-arm64.apk
           make_latest: true
           overwrite_files: true

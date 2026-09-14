@@ -56,9 +56,24 @@ import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 
+import org.json.JSONArray;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class BubbleService extends Service {
@@ -73,6 +88,9 @@ public class BubbleService extends Service {
     private static final String CHANNEL_ID = "bubble_translate_channel";
     private static final int NOTIFICATION_ID = 2409;
     private static final int MAX_REGIONS = 24;
+    private static final String ONLINE_TRANSLATE_URL =
+            "https://translate.googleapis.com/translate_a/single"
+                    + "?client=gtx&sl=zh-CN&tl=vi&dt=t";
 
     private WindowManager windowManager;
     private TextView bubbleView;
@@ -82,6 +100,7 @@ public class BubbleService extends Service {
     private FrameLayout translationLayer;
     private WindowManager.LayoutParams translationLayerParams;
     private final List<Rect> placedTranslationBounds = new ArrayList<>();
+    private final List<Rect> sourceTranslationBounds = new ArrayList<>();
     private boolean translationsVisible;
 
     private MediaProjection mediaProjection;
@@ -92,14 +111,17 @@ public class BubbleService extends Service {
     private Handler mainHandler;
     private HandlerThread captureThread;
     private Handler captureHandler;
+    private ExecutorService onlineTranslationExecutor;
+    private final ConcurrentHashMap<String, String> translationCache =
+            new ConcurrentHashMap<>();
 
     private TextRecognizer textRecognizer;
     private Translator translator;
     private volatile boolean modelReady;
     private volatile boolean captureNextFrame;
     private volatile boolean busy;
-    private boolean cleaningUp;
-    private int captureSequence;
+    private volatile boolean cleaningUp;
+    private volatile int captureSequence;
 
     private int screenWidth;
     private int screenHeight;
@@ -115,6 +137,7 @@ public class BubbleService extends Service {
         captureThread = new HandlerThread("screen-capture");
         captureThread.start();
         captureHandler = new Handler(captureThread.getLooper());
+        onlineTranslationExecutor = Executors.newFixedThreadPool(4);
 
         textRecognizer = TextRecognition.getClient(
                 new ChineseTextRecognizerOptions.Builder().build()
@@ -425,29 +448,284 @@ public class BubbleService extends Service {
 
     private void translateRegions(List<OcrRegion> regions) {
         clearTranslations();
+        prepareSourceBounds(regions);
+        performRegionTranslations(regions);
+    }
 
-        if (modelReady) {
-            performRegionTranslations(regions);
+    private void prepareSourceBounds(List<OcrRegion> regions) {
+        sourceTranslationBounds.clear();
+        for (OcrRegion region : regions) {
+            Rect bounds = mapRegionToOverlay(region);
+            if (bounds.width() >= 2 && bounds.height() >= 2) {
+                sourceTranslationBounds.add(bounds);
+            }
+        }
+    }
+
+    private void performRegionTranslations(List<OcrRegion> regions) {
+        if (onlineTranslationExecutor == null
+                || onlineTranslationExecutor.isShutdown()) {
+            startOfflineFallback(regions, captureSequence, 0);
             return;
         }
 
-        showToast("Đang tải bộ dịch Trung–Việt lần đầu…");
+        showToast("Đang dịch online sát nghĩa hơn…");
+
+        int generation = captureSequence;
+        List<CompletableFuture<RegionTranslation>> futures = new ArrayList<>();
+
+        for (OcrRegion region : regions) {
+            CompletableFuture<RegionTranslation> future =
+                    CompletableFuture.supplyAsync(
+                            () -> translateRegionOnline(region, generation),
+                            onlineTranslationExecutor
+                    );
+            futures.add(future);
+        }
+
+        CompletableFuture
+                .allOf(futures.toArray(new CompletableFuture[0]))
+                .whenComplete((unused, error) -> {
+                    List<RegionTranslation> onlineResults = new ArrayList<>();
+                    List<OcrRegion> offlineFallback = new ArrayList<>();
+
+                    for (int index = 0; index < futures.size(); index++) {
+                        RegionTranslation result = null;
+                        try {
+                            result = futures.get(index).getNow(null);
+                        } catch (Exception ignored) {
+                            // Vùng này sẽ được dịch bằng bộ offline.
+                        }
+
+                        if (result != null && !TextUtils.isEmpty(result.translated)) {
+                            onlineResults.add(result);
+                        } else {
+                            offlineFallback.add(regions.get(index));
+                        }
+                    }
+
+                    mainHandler.post(() -> {
+                        if (cleaningUp || generation != captureSequence) {
+                            return;
+                        }
+
+                        int displayedOnline = renderTranslations(onlineResults);
+
+                        if (offlineFallback.isEmpty()) {
+                            finishTranslation(generation, displayedOnline, false);
+                        } else {
+                            startOfflineFallback(
+                                    offlineFallback,
+                                    generation,
+                                    displayedOnline
+                            );
+                        }
+                    });
+                });
+    }
+
+    private RegionTranslation translateRegionOnline(
+            OcrRegion region,
+            int generation
+    ) {
+        if (cleaningUp || generation != captureSequence) {
+            return new RegionTranslation(region, null);
+        }
+
+        String source = region.source.length() > 900
+                ? region.source.substring(0, 900)
+                : region.source;
+
+        String fixedTerm = exactGameTranslation(source);
+        if (fixedTerm != null) {
+            return new RegionTranslation(region, fixedTerm);
+        }
+
+        try {
+            String translated = translateOnline(source);
+            return new RegionTranslation(
+                    region,
+                    compactTranslation(source, translated)
+            );
+        } catch (Exception ignored) {
+            return new RegionTranslation(region, null);
+        }
+    }
+
+    private String translateOnline(String source) throws Exception {
+        String cached = translationCache.get(source);
+        if (!TextUtils.isEmpty(cached)) {
+            return cached;
+        }
+
+        HttpURLConnection connection = null;
+        try {
+            byte[] body = ("q=" + URLEncoder.encode(
+                    source,
+                    StandardCharsets.UTF_8.name()
+            )).getBytes(StandardCharsets.UTF_8);
+
+            connection = (HttpURLConnection) new URL(
+                    ONLINE_TRANSLATE_URL
+            ).openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(5500);
+            connection.setReadTimeout(8500);
+            connection.setDoOutput(true);
+            connection.setInstanceFollowRedirects(true);
+            connection.setRequestProperty(
+                    "Content-Type",
+                    "application/x-www-form-urlencoded; charset=UTF-8"
+            );
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.4"
+            );
+            connection.setFixedLengthStreamingMode(body.length);
+
+            try (OutputStream outputStream = connection.getOutputStream()) {
+                outputStream.write(body);
+            }
+
+            int responseCode = connection.getResponseCode();
+            if (responseCode < 200 || responseCode >= 300) {
+                throw new IOException("HTTP " + responseCode);
+            }
+
+            String payload;
+            try (InputStream inputStream = connection.getInputStream()) {
+                payload = readUtf8(inputStream);
+            }
+
+            JSONArray root = new JSONArray(payload);
+            JSONArray segments = root.optJSONArray(0);
+            if (segments == null) {
+                throw new IOException("Phản hồi dịch không hợp lệ");
+            }
+
+            StringBuilder translated = new StringBuilder();
+            for (int index = 0; index < segments.length(); index++) {
+                JSONArray segment = segments.optJSONArray(index);
+                if (segment == null) {
+                    continue;
+                }
+                String part = segment.optString(0, "");
+                if (!part.isEmpty()) {
+                    translated.append(part);
+                }
+            }
+
+            String result = translated.toString().trim();
+            if (result.isEmpty()) {
+                throw new IOException("Bản dịch trống");
+            }
+
+            if (translationCache.size() > 500) {
+                translationCache.clear();
+            }
+            translationCache.put(source, result);
+            return result;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private String readUtf8(InputStream inputStream) throws IOException {
+        StringBuilder result = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(inputStream, StandardCharsets.UTF_8)
+        )) {
+            char[] buffer = new char[2048];
+            int read;
+            while ((read = reader.read(buffer)) != -1) {
+                result.append(buffer, 0, read);
+            }
+        }
+        return result.toString();
+    }
+
+    private int renderTranslations(List<RegionTranslation> translations) {
+        translations.sort((first, second) -> {
+            int topComparison = Integer.compare(
+                    first.region.bounds.top,
+                    second.region.bounds.top
+            );
+            if (topComparison != 0) {
+                return topComparison;
+            }
+            return Integer.compare(
+                    first.region.bounds.left,
+                    second.region.bounds.left
+            );
+        });
+
+        int displayed = 0;
+        for (RegionTranslation translation : translations) {
+            if (addTranslationAtPosition(
+                    translation.region,
+                    translation.translated
+            )) {
+                displayed++;
+            }
+        }
+        return displayed;
+    }
+
+    private void startOfflineFallback(
+            List<OcrRegion> regions,
+            int generation,
+            int alreadyDisplayed
+    ) {
+        if (cleaningUp || generation != captureSequence) {
+            return;
+        }
+
+        showToast(alreadyDisplayed > 0
+                ? "Đang hoàn tất các ô còn lại…"
+                : "Dịch online lỗi, đang chuyển sang offline…");
+
+        if (modelReady) {
+            performOfflineTranslations(
+                    regions,
+                    generation,
+                    alreadyDisplayed
+            );
+            return;
+        }
+
         DownloadConditions conditions = new DownloadConditions.Builder().build();
         translator.downloadModelIfNeeded(conditions)
                 .addOnSuccessListener(unused -> {
                     modelReady = true;
-                    performRegionTranslations(regions);
+                    if (!cleaningUp && generation == captureSequence) {
+                        performOfflineTranslations(
+                                regions,
+                                generation,
+                                alreadyDisplayed
+                        );
+                    }
                 })
-                .addOnFailureListener(exception ->
-                        showFailure("Không tải được bộ dịch. Hãy kiểm tra mạng rồi thử lại."));
+                .addOnFailureListener(exception -> {
+                    if (!cleaningUp && generation == captureSequence) {
+                        finishTranslation(
+                                generation,
+                                alreadyDisplayed,
+                                true
+                        );
+                    }
+                });
     }
 
-    private void performRegionTranslations(List<OcrRegion> regions) {
-        showToast("Đang dịch " + regions.size() + " vùng chữ…");
-
-        int generation = captureSequence;
+    private void performOfflineTranslations(
+            List<OcrRegion> regions,
+            int generation,
+            int alreadyDisplayed
+    ) {
         List<Task<String>> tasks = new ArrayList<>();
-        AtomicInteger displayedCount = new AtomicInteger(0);
+        AtomicInteger offlineDisplayed = new AtomicInteger(0);
 
         for (OcrRegion region : regions) {
             String source = region.source.length() > 1000
@@ -462,10 +740,10 @@ public class BubbleService extends Service {
                     return;
                 }
 
-                if (translated != null && !translated.trim().isEmpty()) {
-                    String compact = compactTranslation(region.source, translated);
+                if (!TextUtils.isEmpty(translated)) {
+                    String compact = compactTranslation(source, translated);
                     if (addTranslationAtPosition(region, compact)) {
-                        displayedCount.incrementAndGet();
+                        offlineDisplayed.incrementAndGet();
                     }
                 }
             });
@@ -475,43 +753,239 @@ public class BubbleService extends Service {
             if (cleaningUp || generation != captureSequence) {
                 return;
             }
-
-            busy = false;
-            updateBubbleVisual();
-
-            if (displayedCount.get() == 0) {
-                showToast("Không dịch được nội dung. Hãy thử lại.");
-            } else {
-                showToast("Đã dịch. Chạm × để ẩn.");
-            }
+            finishTranslation(
+                    generation,
+                    alreadyDisplayed + offlineDisplayed.get(),
+                    true
+            );
         });
     }
 
-    private String compactTranslation(String source, String translated) {
-        String key = source.replaceAll("[\\[\\]【】（）()\\s]", "");
+    private void finishTranslation(
+            int generation,
+            int displayedCount,
+            boolean usedOffline
+    ) {
+        if (cleaningUp || generation != captureSequence) {
+            return;
+        }
+
+        busy = false;
+        updateBubbleVisual();
+
+        if (displayedCount == 0) {
+            showToast("Không dịch được nội dung. Hãy kiểm tra mạng rồi thử lại.");
+        } else if (usedOffline) {
+            showToast("Đã dịch; một số ô dùng bộ offline.");
+        } else {
+            showToast("Đã dịch online. Chạm × để ẩn.");
+        }
+    }
+
+    private String exactGameTranslation(String source) {
+        String key = source.replaceAll("[\\[\\]【】（）()\\s:：]", "");
+
         switch (key) {
             case "活动":
                 return "Sự kiện";
             case "公告":
-                return "Tin";
+                return "Thông báo";
             case "领取":
                 return "Nhận";
+            case "已领取":
+                return "Đã nhận";
             case "充值":
                 return "Nạp";
+            case "首充":
+                return "Nạp đầu";
             case "购买":
                 return "Mua";
             case "返回":
-                return "Về";
+                return "Quay lại";
             case "确定":
             case "确认":
-                return "OK";
+                return "Xác nhận";
             case "取消":
                 return "Hủy";
+            case "开启":
+                return "Mở";
+            case "继续":
+                return "Tiếp tục";
+            case "跳过":
+                return "Bỏ qua";
+            case "前往":
+                return "Đi tới";
+            case "免费":
+                return "Miễn phí";
+            case "角色":
+                return "Nhân vật";
+            case "背包":
+                return "Túi đồ";
+            case "装备":
+                return "Trang bị";
+            case "任务":
+                return "Nhiệm vụ";
+            case "主线":
+                return "Cốt truyện";
+            case "支线":
+                return "Nhiệm vụ phụ";
+            case "商城":
+            case "商店":
+                return "Cửa hàng";
+            case "挑战":
+                return "Khiêu chiến";
+            case "竞技场":
+                return "Đấu trường";
+            case "副本":
+                return "Phó bản";
+            case "关卡":
+                return "Ải";
+            case "战力":
+            case "战斗力":
+                return "Lực chiến";
+            case "等级":
+                return "Cấp";
+            case "升级":
+                return "Nâng cấp";
+            case "进阶":
+                return "Tiến bậc";
+            case "突破":
+                return "Đột phá";
+            case "升星":
+                return "Tăng sao";
+            case "阵容":
+                return "Đội hình";
+            case "招募":
+                return "Chiêu mộ";
+            case "召唤":
+                return "Triệu hồi";
+            case "技能":
+                return "Kỹ năng";
+            case "天赋":
+                return "Thiên phú";
+            case "奖励":
+                return "Phần thưởng";
+            case "邮件":
+                return "Thư";
+            case "好友":
+                return "Bạn bè";
+            case "公会":
+            case "帮会":
+                return "Bang hội";
+            case "排行":
+            case "排行榜":
+                return "Xếp hạng";
+            case "设置":
+                return "Cài đặt";
+            case "兑换":
+                return "Đổi";
+            case "签到":
+                return "Điểm danh";
+            case "限时":
+                return "Giới hạn";
+            case "已完成":
+                return "Đã hoàn thành";
+            case "未解锁":
+                return "Chưa mở";
+            case "扫荡":
+                return "Quét";
+            case "挂机":
+                return "Treo máy";
+            case "体力":
+                return "Thể lực";
+            case "元宝":
+                return "Nguyên bảo";
+            case "金币":
+                return "Vàng";
+            case "战斗":
+                return "Chiến đấu";
+            case "十连抽":
+                return "Quay 10 lần";
+            case "单抽":
+                return "Quay 1 lần";
+            case "攻击":
+                return "Công";
+            case "防御":
+                return "Thủ";
+            case "生命":
+                return "Sinh lực";
+            case "暴击":
+                return "Bạo kích";
+            case "命中":
+                return "Chính xác";
+            case "闪避":
+                return "Né tránh";
             default:
-                return translated.trim()
-                        .replaceAll("^\\[\\s*", "")
-                        .replaceAll("\\s*\\]$", "");
+                return null;
         }
+    }
+
+    private String compactTranslation(String source, String translated) {
+        String exact = exactGameTranslation(source);
+        if (exact != null) {
+            return exact;
+        }
+
+        String result = translated.trim()
+                .replaceAll("^\\s*\\[", "")
+                .replaceAll("\\]\\s*$", "");
+
+        if (source.contains("装备")) {
+            result = result.replaceAll(
+                    "(?iu)(trang thiết bị|thiết bị)",
+                    "trang bị"
+            );
+        }
+        if (source.contains("副本")) {
+            result = result.replaceAll(
+                    "(?iu)(bản sao|bản copy|phụ bản)",
+                    "phó bản"
+            );
+        }
+        if (source.contains("战力") || source.contains("战斗力")) {
+            result = result.replaceAll(
+                    "(?iu)(sức mạnh chiến đấu|khả năng chiến đấu|chiến lực)",
+                    "lực chiến"
+            );
+        }
+        if (source.contains("关卡")) {
+            result = result.replaceAll(
+                    "(?iu)(cấp độ|màn chơi)",
+                    "ải"
+            );
+        }
+        if (source.contains("阵容")) {
+            result = result.replaceAll(
+                    "(?iu)(đội ngũ|đội hình chiến đấu)",
+                    "đội hình"
+            );
+        }
+        if (source.contains("招募")) {
+            result = result.replaceAll(
+                    "(?iu)(tuyển dụng|tuyển người)",
+                    "chiêu mộ"
+            );
+        }
+        if (source.contains("碎片")) {
+            result = result.replaceAll(
+                    "(?iu)(mảnh vỡ|mảnh vụn)",
+                    "mảnh"
+            );
+        }
+        if (source.contains("羁绊")) {
+            result = result.replaceAll(
+                    "(?iu)(mối ràng buộc|sự ràng buộc|liên kết)",
+                    "duyên"
+            );
+        }
+        if (source.contains("抽")) {
+            result = result.replaceAll(
+                    "(?iu)(rút thăm|rút|vẽ)",
+                    "quay"
+            );
+        }
+
+        return result;
     }
 
     private void createTranslationLayer() {
@@ -552,7 +1026,16 @@ public class BubbleService extends Service {
             return false;
         }
 
-        if (overlapsExistingRegion(mappedBounds)) {
+        Rect displayBounds = chooseReadableBounds(
+                mappedBounds,
+                region.source,
+                translated
+        );
+
+        if (overlapsExistingRegion(displayBounds)) {
+            displayBounds = new Rect(mappedBounds);
+        }
+        if (overlapsExistingRegion(displayBounds)) {
             return false;
         }
 
@@ -566,7 +1049,10 @@ public class BubbleService extends Service {
         label.setPadding(dp(2), 0, dp(2), 0);
         label.setLineSpacing(0, 0.96f);
         label.setIncludeFontPadding(false);
-        label.setMaxLines(Math.max(1, region.lineCount + 1));
+        label.setMaxLines(Math.max(
+                1,
+                region.lineCount + (displayBounds.height() > mappedBounds.height() ? 2 : 1)
+        ));
         label.setEllipsize(TextUtils.TruncateAt.END);
         label.setAutoSizeTextTypeUniformWithConfiguration(
                 6,
@@ -576,24 +1062,91 @@ public class BubbleService extends Service {
         );
 
         GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.parseColor("#F21A1722"));
+        background.setColor(Color.parseColor("#EC1A1722"));
         background.setCornerRadius(dp(4));
         background.setStroke(dp(1), Color.parseColor("#8F7BFF"));
         label.setBackground(background);
 
         FrameLayout.LayoutParams labelParams = new FrameLayout.LayoutParams(
-                mappedBounds.width(),
-                mappedBounds.height()
+                displayBounds.width(),
+                displayBounds.height()
         );
-        labelParams.leftMargin = mappedBounds.left;
-        labelParams.topMargin = mappedBounds.top;
+        labelParams.leftMargin = displayBounds.left;
+        labelParams.topMargin = displayBounds.top;
 
         translationLayer.addView(label, labelParams);
-        placedTranslationBounds.add(new Rect(mappedBounds));
+        placedTranslationBounds.add(new Rect(displayBounds));
         translationsVisible = true;
         translationLayer.setVisibility(View.VISIBLE);
         updateBubbleVisual();
         return true;
+    }
+
+    private Rect chooseReadableBounds(
+            Rect original,
+            String source,
+            String translated
+    ) {
+        int sourceLength = Math.max(
+                1,
+                source.replaceAll("\\s", "").length()
+        );
+        int translatedLength = translated.replaceAll("\\s", "").length();
+
+        if (translatedLength <= sourceLength * 1.25f) {
+            return new Rect(original);
+        }
+
+        int growX = Math.min(dp(28), Math.max(0, original.width() / 5));
+        int growY = Math.min(dp(10), Math.max(0, original.height() / 5));
+
+        int overlayWidth = translationLayer.getWidth() > 0
+                ? translationLayer.getWidth()
+                : screenWidth;
+        int overlayHeight = translationLayer.getHeight() > 0
+                ? translationLayer.getHeight()
+                : screenHeight;
+
+        Rect candidate = new Rect(
+                original.left - growX / 2,
+                original.top - growY / 2,
+                original.right + growX - growX / 2,
+                original.bottom + growY - growY / 2
+        );
+
+        int candidateWidth = Math.min(candidate.width(), overlayWidth);
+        int candidateHeight = Math.min(candidate.height(), overlayHeight);
+        candidate.left = clamp(
+                candidate.left,
+                0,
+                Math.max(0, overlayWidth - candidateWidth)
+        );
+        candidate.top = clamp(
+                candidate.top,
+                0,
+                Math.max(0, overlayHeight - candidateHeight)
+        );
+        candidate.right = candidate.left + candidateWidth;
+        candidate.bottom = candidate.top + candidateHeight;
+
+        if (coversAnotherSource(candidate, original)
+                || overlapsExistingRegion(candidate)) {
+            return new Rect(original);
+        }
+
+        return candidate;
+    }
+
+    private boolean coversAnotherSource(Rect candidate, Rect ownSource) {
+        for (Rect sourceBounds : sourceTranslationBounds) {
+            if (sourceBounds.equals(ownSource)) {
+                continue;
+            }
+            if (Rect.intersects(candidate, sourceBounds)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Rect mapRegionToOverlay(OcrRegion region) {
@@ -656,6 +1209,7 @@ public class BubbleService extends Service {
 
     private void clearTranslations() {
         placedTranslationBounds.clear();
+        sourceTranslationBounds.clear();
         translationsVisible = false;
 
         if (translationLayer != null) {
@@ -1198,9 +1752,23 @@ public class BubbleService extends Service {
         if (captureThread != null) {
             captureThread.quitSafely();
         }
+        if (onlineTranslationExecutor != null) {
+            onlineTranslationExecutor.shutdownNow();
+        }
+        translationCache.clear();
 
         stopForeground(STOP_FOREGROUND_REMOVE);
         super.onDestroy();
+    }
+
+    private static final class RegionTranslation {
+        final OcrRegion region;
+        final String translated;
+
+        RegionTranslation(OcrRegion region, String translated) {
+            this.region = region;
+            this.translated = translated;
+        }
     }
 
     private static final class OcrRegion {

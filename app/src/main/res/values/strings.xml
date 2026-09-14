@@ -8,10 +8,10 @@
 3. Chọn chia sẻ “Toàn bộ màn hình”
 4. Chạm 译 để dịch; bong bóng đổi thành ×
 5. Chạm × để tắt bản dịch, chạm 译 để dịch màn hình mới</string>
-    <string name="privacy_note">Ảnh màn hình chỉ được xử lý trong điện thoại, không lưu lại và không gửi tới máy chủ riêng.</string>
+    <string name="privacy_note">Ảnh màn hình được OCR trong điện thoại và không lưu lại. Chỉ phần chữ nhận được được gửi tới bộ dịch online; khi lỗi mạng app tự dùng bộ dịch offline.</string>
     <string name="status_off">Chưa bật bong bóng</string>
     <string name="button_start">Bật bong bóng dịch</string>
     <string name="button_stop">Tắt bong bóng</string>
-    <string name="first_use_note">Lần dịch đầu cần mạng để tải bộ dịch Trung–Việt khoảng 30 MB.</string>
+    <string name="first_use_note">Bản dịch online sát nghĩa hơn; bộ dịch offline khoảng 30 MB chỉ dùng làm dự phòng.</string>
     <string name="made_for">Dành cho Ninh Nguyễn</string>
 </resources>

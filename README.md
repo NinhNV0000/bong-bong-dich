@@ -1,32 +1,35 @@
 # Bong Bóng Dịch
 
-Ứng dụng Android dịch chữ Trung trong game sang tiếng Việt ngay trên màn hình.
+Ứng dụng Android nhận chữ Trung trong game và phủ bản dịch tiếng Việt ngay tại vị trí tương ứng.
 
-## Cách hoạt động
+## Phiên bản 1.4.0
 
-1. Mở ứng dụng và bấm **Bật bong bóng dịch**.
+- Ưu tiên bộ dịch online để câu tự nhiên và sát nghĩa hơn.
+- Có từ điển thuật ngữ game Trung–Việt cho các từ như lực chiến, phó bản, đội hình, chiêu mộ, tăng sao và quét.
+- Nếu dịch online lỗi, tự chuyển sang mô hình ML Kit offline.
+- Đồng bộ ảnh chụp và lớp phủ sau khi xoay màn hình.
+- Chạm **译** để dịch; chạm **×** để ẩn bản dịch.
+
+## Cách dùng
+
+1. Bấm **Bật bong bóng dịch**.
 2. Cấp quyền **hiển thị trên ứng dụng khác**.
-3. Đồng ý **chia sẻ toàn bộ màn hình**.
-4. Mở game Trung Quốc và chạm bong bóng **译**.
-5. Ứng dụng chụp màn hình mới, nhận dạng từng vùng chữ rồi phủ tiếng Việt trong đúng khung chữ gốc.
-6. Khi bản dịch hiện, bong bóng đổi thành **×**. Chạm **×** để ẩn toàn bộ bản dịch.
-7. Chạm **译** lần nữa khi muốn dịch màn hình mới.
-
-Phiên bản 1.2.0 bù tỉ lệ và phần viền màn hình ngang, giới hạn kích thước mỗi ô theo vùng OCR gốc, tự co chữ và loại bỏ các vùng OCR trùng nhau.
+3. Đồng ý chia sẻ toàn bộ màn hình.
+4. Mở game và chạm **译**.
+5. Chạm **×** để tắt, rồi chạm **译** khi muốn dịch màn hình mới.
 
 ## Tải APK
 
-Mở mục [Releases](https://github.com/NinhNV0000/bong-bong-dich/releases/latest) và tải tệp `BongBongDich-v1.2.0-arm64.apk`.
+Mở [Releases](https://github.com/NinhNV0000/bong-bong-dich/releases/latest) và tải `BongBongDich-v1.4.0-arm64.apk`.
 
 ## Yêu cầu
 
 - Android 8.0 trở lên, kiến trúc ARM64.
-- Cho phép ứng dụng hiển thị trên ứng dụng khác.
-- Chọn chia sẻ **Toàn bộ màn hình** để tọa độ bản dịch khớp với game.
+- Có mạng để dùng chế độ dịch chất lượng cao.
 - Game không chặn chụp màn hình bằng chế độ bảo mật.
 
 ## Quyền riêng tư
 
-- OCR tiếng Trung dùng mô hình ML Kit được đóng gói trong APK.
-- Mô hình dịch Trung–Việt chạy trên thiết bị sau khi tải về.
-- Ứng dụng không lưu ảnh màn hình, không có tài khoản và không có máy chủ riêng.
+- Ảnh màn hình chỉ được OCR trong điện thoại, không lưu thành tệp.
+- Chỉ phần chữ Trung đã nhận dạng được gửi tới dịch vụ dịch online.
+- Ứng dụng không có tài khoản và không có máy chủ riêng.
