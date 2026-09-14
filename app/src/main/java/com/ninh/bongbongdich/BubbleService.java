@@ -43,13 +43,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
-import com.google.android.gms.tasks.Task;
-import com.google.android.gms.tasks.Tasks;
-import com.google.mlkit.common.model.DownloadConditions;
-import com.google.mlkit.nl.translate.TranslateLanguage;
-import com.google.mlkit.nl.translate.Translation;
-import com.google.mlkit.nl.translate.Translator;
-import com.google.mlkit.nl.translate.TranslatorOptions;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
@@ -74,7 +67,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class BubbleService extends Service {
 
@@ -116,8 +108,6 @@ public class BubbleService extends Service {
             new ConcurrentHashMap<>();
 
     private TextRecognizer textRecognizer;
-    private Translator translator;
-    private volatile boolean modelReady;
     private volatile boolean captureNextFrame;
     private volatile boolean busy;
     private volatile boolean cleaningUp;
@@ -142,12 +132,6 @@ public class BubbleService extends Service {
         textRecognizer = TextRecognition.getClient(
                 new ChineseTextRecognizerOptions.Builder().build()
         );
-
-        TranslatorOptions options = new TranslatorOptions.Builder()
-                .setSourceLanguage(TranslateLanguage.CHINESE)
-                .setTargetLanguage(TranslateLanguage.VIETNAMESE)
-                .build();
-        translator = Translation.getClient(options);
 
         createNotificationChannel();
     }
@@ -261,8 +245,7 @@ public class BubbleService extends Service {
                 .putBoolean(KEY_RUNNING, true)
                 .apply();
 
-        warmUpTranslationModel();
-        showToast("Chạm 译 để dịch, chạm × để tắt bản dịch.");
+        showToast("Chạm 译 để dịch online, chạm × để tắt bản dịch.");
     }
 
     private ImageReader createImageReader(int width, int height) {
@@ -465,7 +448,7 @@ public class BubbleService extends Service {
     private void performRegionTranslations(List<OcrRegion> regions) {
         if (onlineTranslationExecutor == null
                 || onlineTranslationExecutor.isShutdown()) {
-            startOfflineFallback(regions, captureSequence, 0);
+            showFailure("Bộ dịch online chưa sẵn sàng. Hãy bật lại bong bóng.");
             return;
         }
 
@@ -487,39 +470,35 @@ public class BubbleService extends Service {
                 .allOf(futures.toArray(new CompletableFuture[0]))
                 .whenComplete((unused, error) -> {
                     List<RegionTranslation> onlineResults = new ArrayList<>();
-                    List<OcrRegion> offlineFallback = new ArrayList<>();
+                    int failedCount = 0;
 
-                    for (int index = 0; index < futures.size(); index++) {
+                    for (CompletableFuture<RegionTranslation> future : futures) {
                         RegionTranslation result = null;
                         try {
-                            result = futures.get(index).getNow(null);
+                            result = future.getNow(null);
                         } catch (Exception ignored) {
-                            // Vùng này sẽ được dịch bằng bộ offline.
+                            // Báo vùng lỗi sau khi các vùng còn lại hoàn tất.
                         }
 
                         if (result != null && !TextUtils.isEmpty(result.translated)) {
                             onlineResults.add(result);
                         } else {
-                            offlineFallback.add(regions.get(index));
+                            failedCount++;
                         }
                     }
 
+                    int finalFailedCount = failedCount;
                     mainHandler.post(() -> {
                         if (cleaningUp || generation != captureSequence) {
                             return;
                         }
 
-                        int displayedOnline = renderTranslations(onlineResults);
-
-                        if (offlineFallback.isEmpty()) {
-                            finishTranslation(generation, displayedOnline, false);
-                        } else {
-                            startOfflineFallback(
-                                    offlineFallback,
-                                    generation,
-                                    displayedOnline
-                            );
-                        }
+                        int displayed = renderTranslations(onlineResults);
+                        finishOnlineTranslation(
+                                generation,
+                                displayed,
+                                finalFailedCount
+                        );
                     });
                 });
     }
@@ -674,97 +653,10 @@ public class BubbleService extends Service {
         return displayed;
     }
 
-    private void startOfflineFallback(
-            List<OcrRegion> regions,
-            int generation,
-            int alreadyDisplayed
-    ) {
-        if (cleaningUp || generation != captureSequence) {
-            return;
-        }
-
-        showToast(alreadyDisplayed > 0
-                ? "Đang hoàn tất các ô còn lại…"
-                : "Dịch online lỗi, đang chuyển sang offline…");
-
-        if (modelReady) {
-            performOfflineTranslations(
-                    regions,
-                    generation,
-                    alreadyDisplayed
-            );
-            return;
-        }
-
-        DownloadConditions conditions = new DownloadConditions.Builder().build();
-        translator.downloadModelIfNeeded(conditions)
-                .addOnSuccessListener(unused -> {
-                    modelReady = true;
-                    if (!cleaningUp && generation == captureSequence) {
-                        performOfflineTranslations(
-                                regions,
-                                generation,
-                                alreadyDisplayed
-                        );
-                    }
-                })
-                .addOnFailureListener(exception -> {
-                    if (!cleaningUp && generation == captureSequence) {
-                        finishTranslation(
-                                generation,
-                                alreadyDisplayed,
-                                true
-                        );
-                    }
-                });
-    }
-
-    private void performOfflineTranslations(
-            List<OcrRegion> regions,
-            int generation,
-            int alreadyDisplayed
-    ) {
-        List<Task<String>> tasks = new ArrayList<>();
-        AtomicInteger offlineDisplayed = new AtomicInteger(0);
-
-        for (OcrRegion region : regions) {
-            String source = region.source.length() > 1000
-                    ? region.source.substring(0, 1000)
-                    : region.source;
-
-            Task<String> task = translator.translate(source);
-            tasks.add(task);
-
-            task.addOnSuccessListener(translated -> {
-                if (cleaningUp || generation != captureSequence) {
-                    return;
-                }
-
-                if (!TextUtils.isEmpty(translated)) {
-                    String compact = compactTranslation(source, translated);
-                    if (addTranslationAtPosition(region, compact)) {
-                        offlineDisplayed.incrementAndGet();
-                    }
-                }
-            });
-        }
-
-        Tasks.whenAllComplete(tasks).addOnCompleteListener(unused -> {
-            if (cleaningUp || generation != captureSequence) {
-                return;
-            }
-            finishTranslation(
-                    generation,
-                    alreadyDisplayed + offlineDisplayed.get(),
-                    true
-            );
-        });
-    }
-
-    private void finishTranslation(
+    private void finishOnlineTranslation(
             int generation,
             int displayedCount,
-            boolean usedOffline
+            int failedCount
     ) {
         if (cleaningUp || generation != captureSequence) {
             return;
@@ -774,9 +666,9 @@ public class BubbleService extends Service {
         updateBubbleVisual();
 
         if (displayedCount == 0) {
-            showToast("Không dịch được nội dung. Hãy kiểm tra mạng rồi thử lại.");
-        } else if (usedOffline) {
-            showToast("Đã dịch; một số ô dùng bộ offline.");
+            showToast("Dịch online thất bại. Kiểm tra mạng rồi chạm 译 lại.");
+        } else if (failedCount > 0) {
+            showToast("Đã dịch; " + failedCount + " ô bị lỗi, chạm lại để thử.");
         } else {
             showToast("Đã dịch online. Chạm × để ẩn.");
         }
@@ -1407,12 +1299,6 @@ public class BubbleService extends Service {
         showToast(message);
     }
 
-    private void warmUpTranslationModel() {
-        DownloadConditions conditions = new DownloadConditions.Builder().build();
-        translator.downloadModelIfNeeded(conditions)
-                .addOnSuccessListener(unused -> modelReady = true);
-    }
-
     private int[] readCurrentDisplaySize() {
         int width = 0;
         int height = 0;
@@ -1744,9 +1630,6 @@ public class BubbleService extends Service {
 
         if (textRecognizer != null) {
             textRecognizer.close();
-        }
-        if (translator != null) {
-            translator.close();
         }
 
         if (captureThread != null) {
