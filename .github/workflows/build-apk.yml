@@ -1,0 +1,63 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Lấy mã nguồn
+        uses: actions/checkout@v4
+
+      - name: Cài Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cài Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cài Android API 35
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Cài Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build APK debug
+        run: gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Đổi tên APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk BongBongDich-v1.0.0.apk
+
+      - name: Lưu APK trong Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: BongBongDich-v1.0.0
+          path: BongBongDich-v1.0.0.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Tạo bản phát hành v1.0.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: Bong Bóng Dịch v1.0.0
+          body: |
+            Bản đầu tiên: bong bóng nổi, chụp màn hình, nhận dạng chữ Trung và dịch sang tiếng Việt ngay trên thiết bị.
+            
+            Lần dịch đầu cần Internet để tải mô hình Trung–Việt.
+          files: BongBongDich-v1.0.0.apk
+          make_latest: true
+          overwrite_files: true
