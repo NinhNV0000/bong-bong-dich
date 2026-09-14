@@ -39,27 +39,26 @@ jobs:
         run: gradle --no-daemon --stacktrace assembleRelease
 
       - name: Đổi tên APK
-        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.5.0-arm64.apk
+        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.6.0-arm64.apk
 
       - name: Lưu APK trong Actions
         uses: actions/upload-artifact@v4
         with:
-          name: BongBongDich-v1.5.0-arm64
-          path: BongBongDich-v1.5.0-arm64.apk
+          name: BongBongDich-v1.6.0-arm64
+          path: BongBongDich-v1.6.0-arm64.apk
           if-no-files-found: error
           retention-days: 90
 
-      - name: Tạo bản phát hành v1.5.0
+      - name: Tạo bản phát hành v1.6.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.5.0
-          name: Bong Bóng Dịch v1.5.0
+          tag_name: v1.6.0
+          name: Bong Bóng Dịch v1.6.0
           body: |
-            Chỉ dùng bộ dịch online theo lựa chọn của người dùng, bỏ hẳn model dịch offline.
+            Tăng tốc bằng cách thu gọn ảnh OCR, dịch nhiều ô trong một lượt và lưu bộ nhớ đệm.
             
-            Tự sửa các từ game như lực chiến, phó bản, đội hình, chiêu mộ, tăng sao và quét.
-            Ảnh được OCR trên điện thoại; chỉ phần chữ nhận dạng được gửi đi dịch.
-            Giữ bản sửa tọa độ màn hình ngang và nút 译 / × để bật tắt.
-          files: BongBongDich-v1.5.0-arm64.apk
+            Giao diện tối mới, dễ nhìn hơn khi chơi game. Kéo bong bóng xuống vùng × để tắt hẳn.
+            Ảnh vẫn được OCR trên điện thoại; chỉ phần chữ nhận dạng được gửi đi dịch online.
+          files: BongBongDich-v1.6.0-arm64.apk
           make_latest: true
           overwrite_files: true

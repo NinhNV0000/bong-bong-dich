@@ -62,11 +62,15 @@ import java.net.URLEncoder;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class BubbleService extends Service {
 
@@ -80,6 +84,13 @@ public class BubbleService extends Service {
     private static final String CHANNEL_ID = "bubble_translate_channel";
     private static final int NOTIFICATION_ID = 2409;
     private static final int MAX_REGIONS = 24;
+    private static final int MAX_OCR_LONG_EDGE = 2200;
+    private static final int MAX_BATCH_CHARACTERS = 2600;
+    private static final Pattern BATCH_MARKER_PATTERN = Pattern.compile(
+            "\\[\\s*\\[\\s*\\[\\s*BBD\\s*[_-]?\\s*(\\d+)"
+                    + "\\s*\\]\\s*\\]\\s*\\]",
+            Pattern.CASE_INSENSITIVE
+    );
     private static final String ONLINE_TRANSLATE_URL =
             "https://translate.googleapis.com/translate_a/single"
                     + "?client=gtx&sl=zh-CN&tl=vi&dt=t";
@@ -88,6 +99,11 @@ public class BubbleService extends Service {
     private TextView bubbleView;
     private GradientDrawable bubbleBackground;
     private WindowManager.LayoutParams bubbleParams;
+
+    private TextView dismissTargetView;
+    private GradientDrawable dismissTargetBackground;
+    private WindowManager.LayoutParams dismissTargetParams;
+    private boolean bubbleOverDismissTarget;
 
     private FrameLayout translationLayer;
     private WindowManager.LayoutParams translationLayerParams;
@@ -238,6 +254,7 @@ public class BubbleService extends Service {
         }
 
         createTranslationLayer();
+        createDismissTarget();
         createBubble();
 
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -245,7 +262,7 @@ public class BubbleService extends Service {
                 .putBoolean(KEY_RUNNING, true)
                 .apply();
 
-        showToast("Chạm 译 để dịch online, chạm × để tắt bản dịch.");
+        showToast("Chạm 译 để dịch; kéo bong bóng xuống × để tắt.");
     }
 
     private ImageReader createImageReader(int width, int height) {
@@ -326,10 +343,10 @@ public class BubbleService extends Service {
             return;
         }
 
-        final int imageWidth = bitmap.getWidth();
-        final int imageHeight = bitmap.getHeight();
+        final int capturedWidth = bitmap.getWidth();
+        final int capturedHeight = bitmap.getHeight();
 
-        if (!hasSameOrientation(imageWidth, imageHeight, screenWidth, screenHeight)) {
+        if (!hasSameOrientation(capturedWidth, capturedHeight, screenWidth, screenHeight)) {
             bitmap.recycle();
             busy = false;
             captureNextFrame = false;
@@ -340,7 +357,10 @@ public class BubbleService extends Service {
             return;
         }
 
-        InputImage inputImage = InputImage.fromBitmap(bitmap, 0);
+        Bitmap ocrBitmap = scaleBitmapForOcr(bitmap);
+        final int imageWidth = ocrBitmap.getWidth();
+        final int imageHeight = ocrBitmap.getHeight();
+        InputImage inputImage = InputImage.fromBitmap(ocrBitmap, 0);
 
         textRecognizer.process(inputImage)
                 .addOnSuccessListener(result -> {
@@ -366,10 +386,25 @@ public class BubbleService extends Service {
                 .addOnFailureListener(exception ->
                         showFailure("Không nhận dạng được chữ: " + readableError(exception)))
                 .addOnCompleteListener(task -> {
+                    if (ocrBitmap != bitmap && !ocrBitmap.isRecycled()) {
+                        ocrBitmap.recycle();
+                    }
                     if (!bitmap.isRecycled()) {
                         bitmap.recycle();
                     }
                 });
+    }
+
+    private Bitmap scaleBitmapForOcr(Bitmap source) {
+        int longEdge = Math.max(source.getWidth(), source.getHeight());
+        if (longEdge <= MAX_OCR_LONG_EDGE) {
+            return source;
+        }
+
+        float scale = MAX_OCR_LONG_EDGE / (float) longEdge;
+        int width = Math.max(1, Math.round(source.getWidth() * scale));
+        int height = Math.max(1, Math.round(source.getHeight() * scale));
+        return Bitmap.createScaledBitmap(source, width, height, true);
     }
 
     private List<OcrRegion> extractChineseRegions(
@@ -452,15 +487,16 @@ public class BubbleService extends Service {
             return;
         }
 
-        showToast("Đang dịch online sát nghĩa hơn…");
+        showToast("Đang dịch nhanh toàn màn hình…");
 
         int generation = captureSequence;
-        List<CompletableFuture<RegionTranslation>> futures = new ArrayList<>();
+        List<List<OcrRegion>> batches = buildRegionBatches(regions);
+        List<CompletableFuture<List<RegionTranslation>>> futures = new ArrayList<>();
 
-        for (OcrRegion region : regions) {
-            CompletableFuture<RegionTranslation> future =
+        for (List<OcrRegion> batch : batches) {
+            CompletableFuture<List<RegionTranslation>> future =
                     CompletableFuture.supplyAsync(
-                            () -> translateRegionOnline(region, generation),
+                            () -> translateBatchOnline(batch, generation),
                             onlineTranslationExecutor
                     );
             futures.add(future);
@@ -470,24 +506,24 @@ public class BubbleService extends Service {
                 .allOf(futures.toArray(new CompletableFuture[0]))
                 .whenComplete((unused, error) -> {
                     List<RegionTranslation> onlineResults = new ArrayList<>();
-                    int failedCount = 0;
 
-                    for (CompletableFuture<RegionTranslation> future : futures) {
-                        RegionTranslation result = null;
+                    for (CompletableFuture<List<RegionTranslation>> future : futures) {
+                        List<RegionTranslation> results = null;
                         try {
-                            result = future.getNow(null);
+                            results = future.getNow(null);
                         } catch (Exception ignored) {
-                            // Báo vùng lỗi sau khi các vùng còn lại hoàn tất.
+                            // Các lô còn lại vẫn được hiển thị bình thường.
                         }
 
-                        if (result != null && !TextUtils.isEmpty(result.translated)) {
-                            onlineResults.add(result);
-                        } else {
-                            failedCount++;
+                        if (results != null) {
+                            onlineResults.addAll(results);
                         }
                     }
 
-                    int finalFailedCount = failedCount;
+                    int finalFailedCount = Math.max(
+                            0,
+                            regions.size() - onlineResults.size()
+                    );
                     mainHandler.post(() -> {
                         if (cleaningUp || generation != captureSequence) {
                             return;
@@ -501,6 +537,175 @@ public class BubbleService extends Service {
                         );
                     });
                 });
+    }
+
+    private List<List<OcrRegion>> buildRegionBatches(List<OcrRegion> regions) {
+        List<List<OcrRegion>> batches = new ArrayList<>();
+        List<OcrRegion> currentBatch = new ArrayList<>();
+        int currentCharacters = 0;
+
+        for (OcrRegion region : regions) {
+            int sourceLength = Math.min(region.source.length(), 900);
+            int estimatedCharacters = sourceLength + 24;
+
+            if (!currentBatch.isEmpty()
+                    && currentCharacters + estimatedCharacters > MAX_BATCH_CHARACTERS) {
+                batches.add(currentBatch);
+                currentBatch = new ArrayList<>();
+                currentCharacters = 0;
+            }
+
+            currentBatch.add(region);
+            currentCharacters += estimatedCharacters;
+        }
+
+        if (!currentBatch.isEmpty()) {
+            batches.add(currentBatch);
+        }
+        return batches;
+    }
+
+    private List<RegionTranslation> translateBatchOnline(
+            List<OcrRegion> regions,
+            int generation
+    ) {
+        List<RegionTranslation> results = new ArrayList<>();
+        if (cleaningUp || generation != captureSequence) {
+            return results;
+        }
+
+        List<OcrRegion> pendingRegions = new ArrayList<>();
+        List<String> pendingSources = new ArrayList<>();
+        StringBuilder batchRequest = new StringBuilder();
+
+        for (OcrRegion region : regions) {
+            String source = region.source.length() > 900
+                    ? region.source.substring(0, 900)
+                    : region.source;
+
+            String fixedTerm = exactGameTranslation(source);
+            if (!TextUtils.isEmpty(fixedTerm)) {
+                results.add(new RegionTranslation(region, fixedTerm));
+                continue;
+            }
+
+            String cached = translationCache.get(source);
+            if (!TextUtils.isEmpty(cached)) {
+                results.add(new RegionTranslation(
+                        region,
+                        compactTranslation(source, cached)
+                ));
+                continue;
+            }
+
+            int markerIndex = pendingRegions.size();
+            pendingRegions.add(region);
+            pendingSources.add(source);
+            batchRequest
+                    .append(batchMarker(markerIndex))
+                    .append('\n')
+                    .append(source)
+                    .append('\n');
+        }
+
+        if (pendingRegions.isEmpty()) {
+            return results;
+        }
+
+        Map<Integer, String> translatedParts = new HashMap<>();
+        try {
+            translatedParts = parseBatchTranslation(
+                    translateOnline(batchRequest.toString())
+            );
+        } catch (Exception ignored) {
+            // Nếu dịch vụ đổi định dạng, thử riêng từng ô ở dưới.
+        }
+
+        for (int index = 0; index < pendingRegions.size(); index++) {
+            if (cleaningUp || generation != captureSequence) {
+                return new ArrayList<>();
+            }
+
+            OcrRegion region = pendingRegions.get(index);
+            String source = pendingSources.get(index);
+            String translated = cleanBatchPart(translatedParts.get(index));
+
+            if (!TextUtils.isEmpty(translated)) {
+                translated = compactTranslation(source, translated);
+                cacheTranslation(source, translated);
+                results.add(new RegionTranslation(region, translated));
+                continue;
+            }
+
+            RegionTranslation fallback = translateRegionOnline(region, generation);
+            if (fallback != null && !TextUtils.isEmpty(fallback.translated)) {
+                results.add(fallback);
+            }
+        }
+
+        return results;
+    }
+
+    private String batchMarker(int index) {
+        return "[[[BBD_" + index + "]]]";
+    }
+
+    private Map<Integer, String> parseBatchTranslation(String translated) {
+        Map<Integer, String> parts = new HashMap<>();
+        if (TextUtils.isEmpty(translated)) {
+            return parts;
+        }
+
+        Matcher matcher = BATCH_MARKER_PATTERN.matcher(translated);
+        int previousIndex = -1;
+        int contentStart = -1;
+
+        while (matcher.find()) {
+            if (previousIndex >= 0 && contentStart >= 0) {
+                String part = cleanBatchPart(
+                        translated.substring(contentStart, matcher.start())
+                );
+                if (!TextUtils.isEmpty(part)) {
+                    parts.put(previousIndex, part);
+                }
+            }
+
+            try {
+                previousIndex = Integer.parseInt(matcher.group(1));
+            } catch (NumberFormatException ignored) {
+                previousIndex = -1;
+            }
+            contentStart = matcher.end();
+        }
+
+        if (previousIndex >= 0 && contentStart >= 0) {
+            String part = cleanBatchPart(translated.substring(contentStart));
+            if (!TextUtils.isEmpty(part)) {
+                parts.put(previousIndex, part);
+            }
+        }
+
+        return parts;
+    }
+
+    private String cleanBatchPart(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.trim()
+                .replaceAll("^[\\s:：\\-–—]+", "")
+                .replaceAll("[\\s:：\\-–—]+$", "")
+                .trim();
+    }
+
+    private void cacheTranslation(String source, String translated) {
+        if (TextUtils.isEmpty(source) || TextUtils.isEmpty(translated)) {
+            return;
+        }
+        if (translationCache.size() > 500) {
+            translationCache.clear();
+        }
+        translationCache.put(source, translated);
     }
 
     private RegionTranslation translateRegionOnline(
@@ -559,7 +764,7 @@ public class BubbleService extends Service {
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty(
                     "User-Agent",
-                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.4"
+                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.6"
             );
             connection.setFixedLengthStreamingMode(body.length);
 
@@ -600,10 +805,7 @@ public class BubbleService extends Service {
                 throw new IOException("Bản dịch trống");
             }
 
-            if (translationCache.size() > 500) {
-                translationCache.clear();
-            }
-            translationCache.put(source, result);
+            cacheTranslation(source, result);
             return result;
         } finally {
             if (connection != null) {
@@ -1156,7 +1358,113 @@ public class BubbleService extends Service {
                     showFailure("Không chụp được màn hình. Hãy thử lại.");
                 }
             }, 2000);
-        }, 300);
+        }, 120);
+    }
+
+    private void createDismissTarget() {
+        if (dismissTargetView != null) {
+            return;
+        }
+
+        dismissTargetView = new TextView(this);
+        dismissTargetView.setText("×  Kéo vào đây để tắt");
+        dismissTargetView.setTextColor(Color.WHITE);
+        dismissTargetView.setTextSize(14);
+        dismissTargetView.setTypeface(Typeface.DEFAULT_BOLD);
+        dismissTargetView.setGravity(Gravity.CENTER);
+        dismissTargetView.setIncludeFontPadding(false);
+        dismissTargetView.setPadding(dp(16), 0, dp(16), 0);
+        dismissTargetView.setVisibility(View.INVISIBLE);
+        dismissTargetView.setElevation(dp(12));
+
+        dismissTargetBackground = new GradientDrawable();
+        dismissTargetBackground.setShape(GradientDrawable.RECTANGLE);
+        dismissTargetBackground.setCornerRadius(dp(30));
+        dismissTargetBackground.setColor(Color.parseColor("#E02A304A"));
+        dismissTargetBackground.setStroke(dp(1), Color.parseColor("#66FFFFFF"));
+        dismissTargetView.setBackground(dismissTargetBackground);
+
+        dismissTargetParams = new WindowManager.LayoutParams(
+                dp(220),
+                dp(58),
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+        );
+        dismissTargetParams.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        dismissTargetParams.y = dp(30);
+
+        windowManager.addView(dismissTargetView, dismissTargetParams);
+    }
+
+    private void showDismissTarget() {
+        if (dismissTargetView == null) {
+            return;
+        }
+        if (dismissTargetView.getVisibility() != View.VISIBLE) {
+            dismissTargetView.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void hideDismissTarget() {
+        bubbleOverDismissTarget = false;
+        if (dismissTargetView != null) {
+            updateDismissTargetVisual(false);
+            dismissTargetView.setVisibility(View.INVISIBLE);
+        }
+    }
+
+    private void updateDismissTargetVisual(boolean active) {
+        if (dismissTargetView == null || dismissTargetBackground == null) {
+            return;
+        }
+        bubbleOverDismissTarget = active;
+        dismissTargetView.setText(active
+                ? "✓  Thả tay để tắt"
+                : "×  Kéo vào đây để tắt");
+        dismissTargetBackground.setColor(Color.parseColor(
+                active ? "#F0445E" : "#E02A304A"
+        ));
+        dismissTargetBackground.setStroke(
+                dp(active ? 2 : 1),
+                Color.parseColor(active ? "#FFFFFFFF" : "#66FFFFFF")
+        );
+        dismissTargetView.setScaleX(active ? 1.08f : 1f);
+        dismissTargetView.setScaleY(active ? 1.08f : 1f);
+        dismissTargetView.invalidate();
+    }
+
+    private boolean isBubbleInsideDismissTarget() {
+        if (bubbleParams == null || dismissTargetParams == null) {
+            return false;
+        }
+
+        int targetWidth = dismissTargetView != null && dismissTargetView.getWidth() > 0
+                ? dismissTargetView.getWidth()
+                : dismissTargetParams.width;
+        int targetHeight = dismissTargetView != null && dismissTargetView.getHeight() > 0
+                ? dismissTargetView.getHeight()
+                : dismissTargetParams.height;
+        int targetLeft = (screenWidth - targetWidth) / 2;
+        int targetTop = screenHeight - dismissTargetParams.y - targetHeight;
+        if (dismissTargetView != null && dismissTargetView.getVisibility() == View.VISIBLE) {
+            int[] targetLocation = new int[]{targetLeft, targetTop};
+            dismissTargetView.getLocationOnScreen(targetLocation);
+            targetLeft = targetLocation[0];
+            targetTop = targetLocation[1];
+        }
+
+        Rect target = new Rect(
+                targetLeft - dp(24),
+                targetTop - dp(24),
+                targetLeft + targetWidth + dp(24),
+                targetTop + targetHeight + dp(18)
+        );
+        int bubbleCenterX = bubbleParams.x + bubbleParams.width / 2;
+        int bubbleCenterY = bubbleParams.y + bubbleParams.height / 2;
+        return target.contains(bubbleCenterX, bubbleCenterY);
     }
 
     private void createBubble() {
@@ -1173,7 +1481,8 @@ public class BubbleService extends Service {
 
         bubbleBackground = new GradientDrawable();
         bubbleBackground.setShape(GradientDrawable.OVAL);
-        bubbleBackground.setStroke(dp(2), Color.parseColor("#66FFFFFF"));
+        bubbleBackground.setOrientation(GradientDrawable.Orientation.TL_BR);
+        bubbleBackground.setStroke(dp(2), Color.parseColor("#B3FFFFFF"));
         bubbleView.setBackground(bubbleBackground);
         bubbleView.setElevation(dp(9));
 
@@ -1202,15 +1511,24 @@ public class BubbleService extends Service {
         if (translationsVisible) {
             bubbleView.setText("×");
             bubbleView.setContentDescription("Chạm để tắt bản dịch");
-            bubbleBackground.setColor(Color.parseColor("#D64545"));
+            bubbleBackground.setColors(new int[]{
+                    Color.parseColor("#FB7185"),
+                    Color.parseColor("#E11D48")
+            });
         } else if (busy) {
             bubbleView.setText("…");
             bubbleView.setContentDescription("Chạm để hủy dịch");
-            bubbleBackground.setColor(Color.parseColor("#D88A20"));
+            bubbleBackground.setColors(new int[]{
+                    Color.parseColor("#F59E0B"),
+                    Color.parseColor("#EA580C")
+            });
         } else {
             bubbleView.setText("译");
             bubbleView.setContentDescription("Chạm để dịch, kéo để di chuyển");
-            bubbleBackground.setColor(Color.parseColor("#6847F5"));
+            bubbleBackground.setColors(new int[]{
+                    Color.parseColor("#8B5CF6"),
+                    Color.parseColor("#22D3EE")
+            });
         }
 
         bubbleView.invalidate();
@@ -1230,6 +1548,7 @@ public class BubbleService extends Service {
             public boolean onTouch(View view, MotionEvent event) {
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
+                        hideDismissTarget();
                         startX = bubbleParams.x;
                         startY = bubbleParams.y;
                         touchStartX = event.getRawX();
@@ -1242,6 +1561,7 @@ public class BubbleService extends Service {
                         int deltaY = Math.round(event.getRawY() - touchStartY);
                         if (Math.abs(deltaX) > touchSlop || Math.abs(deltaY) > touchSlop) {
                             moved = true;
+                            showDismissTarget();
                         }
 
                         bubbleParams.x = clamp(
@@ -1260,15 +1580,26 @@ public class BubbleService extends Service {
                         } catch (Exception ignored) {
                             // Dịch vụ có thể đang dừng.
                         }
+                        if (moved) {
+                            updateDismissTargetVisual(isBubbleInsideDismissTarget());
+                        }
                         return true;
 
                     case MotionEvent.ACTION_UP:
+                        boolean shouldStop = moved && isBubbleInsideDismissTarget();
+                        hideDismissTarget();
+                        if (shouldStop) {
+                            showToast("Đã tắt bong bóng dịch.");
+                            stopSelf();
+                            return true;
+                        }
                         if (!moved) {
                             handleBubbleTap();
                         }
                         return true;
 
                     case MotionEvent.ACTION_CANCEL:
+                        hideDismissTarget();
                         return true;
 
                     default:
@@ -1517,7 +1848,7 @@ public class BubbleService extends Service {
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Bong Bóng Dịch")
-                .setContentText("译: dịch màn hình • ×: tắt bản dịch")
+                .setContentText("译: dịch • ×: ẩn • kéo xuống để tắt bong bóng")
                 .setContentIntent(openPendingIntent)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -1594,6 +1925,15 @@ public class BubbleService extends Service {
                 // View đã được gỡ.
             }
             translationLayer = null;
+        }
+
+        if (dismissTargetView != null) {
+            try {
+                windowManager.removeView(dismissTargetView);
+            } catch (Exception ignored) {
+                // View đã được gỡ.
+            }
+            dismissTargetView = null;
         }
 
         if (bubbleView != null) {

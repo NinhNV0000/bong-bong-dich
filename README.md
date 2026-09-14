@@ -2,11 +2,13 @@
 
 Ứng dụng Android nhận chữ Trung trong game và phủ bản dịch tiếng Việt ngay tại vị trí tương ứng.
 
-## Phiên bản 1.5.0
+## Phiên bản 1.6.0
 
-- Chỉ dùng dịch online để ưu tiên chất lượng và tốc độ.
+- Gom nhiều ô chữ vào một lượt dịch online để giảm thời gian chờ.
+- Thu gọn ảnh trước OCR và lưu bản dịch đã gặp để lần sau phản hồi nhanh hơn.
 - Có từ điển thuật ngữ game Trung–Việt cho lực chiến, phó bản, đội hình, chiêu mộ, tăng sao, quét và nhiều từ khác.
 - Không tải hoặc chuyển sang model dịch offline.
+- Giao diện tối mới; kéo bong bóng xuống vùng × để tắt hẳn.
 - Khung tiếng Việt được nới nhẹ khi có khoảng trống nhưng không che vùng chữ khác.
 - Đồng bộ ảnh chụp và lớp phủ sau khi xoay màn hình.
 - Chạm **译** để dịch; chạm **×** để ẩn.

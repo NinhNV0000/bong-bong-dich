@@ -1,17 +1,17 @@
 <resources>
     <string name="app_name">Bong Bóng Dịch</string>
     <string name="app_title">Bong Bóng Dịch</string>
-    <string name="app_subtitle">Dịch chữ Trung và phủ tiếng Việt ngay đúng vị trí trong game</string>
-    <string name="how_to_title">Cách dùng</string>
-    <string name="how_to_steps">1. Bấm “Bật bong bóng dịch”
-2. Cho phép hiển thị trên ứng dụng khác
-3. Chọn chia sẻ “Toàn bộ màn hình”
-4. Chạm 译 để dịch; bong bóng đổi thành ×
-5. Chạm × để tắt bản dịch, chạm 译 để dịch màn hình mới</string>
+    <string name="app_subtitle">Dịch nhanh chữ Trung ngay trên game — đúng vị trí, không cần chuyển ứng dụng</string>
+    <string name="online_badge">● ONLINE  •  TRUNG → VIỆT</string>
+    <string name="how_to_title">DỊCH TRỰC TIẾP</string>
+    <string name="how_to_steps">1  Bật bong bóng và chia sẻ toàn bộ màn hình
+2  Chạm 译 để dịch; chạm × để ẩn bản dịch
+3  Kéo bong bóng xuống vùng đỏ rồi thả để tắt hẳn</string>
+    <string name="speed_note">⚡ Dịch theo lô và ghi nhớ câu cũ để phản hồi nhanh hơn</string>
     <string name="privacy_note">Ảnh màn hình được OCR trong điện thoại và không lưu lại. Chỉ phần chữ nhận được được gửi tới bộ dịch online.</string>
     <string name="status_off">Chưa bật bong bóng</string>
-    <string name="button_start">Bật bong bóng dịch</string>
+    <string name="button_start">Bật dịch trên màn hình</string>
     <string name="button_stop">Tắt bong bóng</string>
-    <string name="first_use_note">Ứng dụng dịch online nên cần có mạng mỗi lần chạm 译.</string>
+    <string name="drag_hint">↓  Kéo bong bóng xuống vùng × để tắt nhanh</string>
     <string name="made_for">Dành cho Ninh Nguyễn</string>
 </resources>
