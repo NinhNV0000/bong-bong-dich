@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
@@ -110,8 +111,17 @@ public class MainActivity extends AppCompatActivity {
             setStatus("Điện thoại không hỗ trợ chức năng chụp màn hình.");
             return;
         }
-        setStatus("Hãy chọn “Toàn bộ màn hình” rồi bấm Bắt đầu.");
-        screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent());
+        setStatus("Hãy bấm Bắt đầu để cho phép dịch toàn bộ màn hình.");
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            MediaProjectionConfig config =
+                    MediaProjectionConfig.createConfigForDefaultDisplay();
+            screenCaptureLauncher.launch(
+                    projectionManager.createScreenCaptureIntent(config)
+            );
+        } else {
+            screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent());
+        }
     }
 
     private void startBubbleService(int resultCode, Intent resultData) {

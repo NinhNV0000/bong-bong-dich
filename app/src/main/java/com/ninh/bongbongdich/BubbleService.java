@@ -201,6 +201,14 @@ public class BubbleService extends Service {
                     });
                 }
             }
+
+            @Override
+            public void onCapturedContentResize(int width, int height) {
+                if (cleaningUp || width <= 0 || height <= 0) {
+                    return;
+                }
+                mainHandler.post(() -> resizeProjectionTo(width, height));
+            }
         };
         mediaProjection.registerCallback(mediaProjectionCallback, mainHandler);
 
@@ -314,6 +322,18 @@ public class BubbleService extends Service {
 
         final int imageWidth = bitmap.getWidth();
         final int imageHeight = bitmap.getHeight();
+
+        if (!hasSameOrientation(imageWidth, imageHeight, screenWidth, screenHeight)) {
+            bitmap.recycle();
+            busy = false;
+            captureNextFrame = false;
+            resizeProjection();
+            updateBubbleVisual();
+            showBubble();
+            showToast("Màn hình vừa xoay. Chạm 译 để dịch lại.");
+            return;
+        }
+
         InputImage inputImage = InputImage.fromBitmap(bitmap, 0);
 
         textRecognizer.process(inputImage)
@@ -507,8 +527,8 @@ public class BubbleService extends Service {
         );
 
         translationLayerParams = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
+                Math.max(1, screenWidth),
+                Math.max(1, screenHeight),
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
@@ -584,30 +604,25 @@ public class BubbleService extends Service {
                 ? translationLayer.getHeight()
                 : screenHeight;
 
-        float captureScale = Math.min(
-                region.imageWidth / (float) Math.max(1, overlayWidth),
-                region.imageHeight / (float) Math.max(1, overlayHeight)
-        );
-        if (captureScale <= 0f) {
-            captureScale = 1f;
+        if (!hasSameOrientation(
+                region.imageWidth,
+                region.imageHeight,
+                overlayWidth,
+                overlayHeight
+        )) {
+            return new Rect();
         }
 
-        float renderedWidth = overlayWidth * captureScale;
-        float renderedHeight = overlayHeight * captureScale;
-        float captureOffsetX = (region.imageWidth - renderedWidth) / 2f;
-        float captureOffsetY = (region.imageHeight - renderedHeight) / 2f;
+        float scaleX = overlayWidth / (float) Math.max(1, region.imageWidth);
+        float scaleY = overlayHeight / (float) Math.max(1, region.imageHeight);
 
         int[] layerLocation = new int[]{0, 0};
         translationLayer.getLocationOnScreen(layerLocation);
 
-        int left = Math.round((region.bounds.left - captureOffsetX) / captureScale)
-                - layerLocation[0];
-        int top = Math.round((region.bounds.top - captureOffsetY) / captureScale)
-                - layerLocation[1];
-        int right = Math.round((region.bounds.right - captureOffsetX) / captureScale)
-                - layerLocation[0];
-        int bottom = Math.round((region.bounds.bottom - captureOffsetY) / captureScale)
-                - layerLocation[1];
+        int left = Math.round(region.bounds.left * scaleX) - layerLocation[0];
+        int top = Math.round(region.bounds.top * scaleY) - layerLocation[1];
+        int right = Math.round(region.bounds.right * scaleX) - layerLocation[0];
+        int bottom = Math.round(region.bounds.bottom * scaleY) - layerLocation[1];
 
         left = clamp(left, 0, Math.max(0, overlayWidth - 1));
         top = clamp(top, 0, Math.max(0, overlayHeight - 1));
@@ -667,6 +682,8 @@ public class BubbleService extends Service {
     }
 
     private void requestCapture() {
+        resizeProjection();
+
         if (imageReader == null || virtualDisplay == null) {
             showFailure("Chưa sẵn sàng chụp màn hình. Hãy bật lại bong bóng.");
             return;
@@ -842,21 +859,51 @@ public class BubbleService extends Service {
                 .addOnSuccessListener(unused -> modelReady = true);
     }
 
-    private void updateScreenBounds() {
-        densityDpi = getResources().getConfiguration().densityDpi;
+    private int[] readCurrentDisplaySize() {
+        int width = 0;
+        int height = 0;
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        try {
+            DisplayMetrics realMetrics = new DisplayMetrics();
+            windowManager.getDefaultDisplay().getRealMetrics(realMetrics);
+            width = realMetrics.widthPixels;
+            height = realMetrics.heightPixels;
+        } catch (Exception ignored) {
+            // Dùng WindowMetrics ở dưới nếu máy không trả được real metrics.
+        }
+
+        if ((width <= 0 || height <= 0) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             WindowMetrics metrics = windowManager.getMaximumWindowMetrics();
             Rect bounds = metrics.getBounds();
-            screenWidth = bounds.width();
-            screenHeight = bounds.height();
-        } else {
-            DisplayMetrics metrics = new DisplayMetrics();
-            windowManager.getDefaultDisplay().getRealMetrics(metrics);
-            screenWidth = metrics.widthPixels;
-            screenHeight = metrics.heightPixels;
-            densityDpi = metrics.densityDpi;
+            width = bounds.width();
+            height = bounds.height();
         }
+
+        if (width <= 0 || height <= 0) {
+            DisplayMetrics metrics = getResources().getDisplayMetrics();
+            width = metrics.widthPixels;
+            height = metrics.heightPixels;
+        }
+
+        int orientation = getResources().getConfiguration().orientation;
+        if (orientation == Configuration.ORIENTATION_LANDSCAPE && width < height) {
+            int temporary = width;
+            width = height;
+            height = temporary;
+        } else if (orientation == Configuration.ORIENTATION_PORTRAIT && width > height) {
+            int temporary = width;
+            width = height;
+            height = temporary;
+        }
+
+        return new int[]{Math.max(1, width), Math.max(1, height)};
+    }
+
+    private void updateScreenBounds() {
+        densityDpi = getResources().getConfiguration().densityDpi;
+        int[] size = readCurrentDisplaySize();
+        screenWidth = size[0];
+        screenHeight = size[1];
     }
 
     @Override
@@ -870,50 +917,127 @@ public class BubbleService extends Service {
             return;
         }
 
-        int oldWidth = screenWidth;
-        int oldHeight = screenHeight;
-        updateScreenBounds();
+        int[] size = readCurrentDisplaySize();
+        resizeProjectionTo(size[0], size[1]);
+    }
 
-        if (oldWidth == screenWidth && oldHeight == screenHeight) {
+    private void resizeProjectionTo(int targetWidth, int targetHeight) {
+        if (cleaningUp || virtualDisplay == null
+                || targetWidth <= 0 || targetHeight <= 0) {
             return;
         }
+
+        targetWidth = Math.max(1, targetWidth);
+        targetHeight = Math.max(1, targetHeight);
+        densityDpi = getResources().getConfiguration().densityDpi;
+
+        boolean readerAlreadyMatches = imageReader != null
+                && imageReader.getWidth() == targetWidth
+                && imageReader.getHeight() == targetHeight;
+
+        if (readerAlreadyMatches) {
+            screenWidth = targetWidth;
+            screenHeight = targetHeight;
+            ensureOverlayGeometry();
+            clampBubbleToScreen();
+            return;
+        }
+
+        int oldWidth = screenWidth;
+        int oldHeight = screenHeight;
+        ImageReader oldReader = imageReader;
+        ImageReader newReader = createImageReader(targetWidth, targetHeight);
 
         captureSequence++;
         busy = false;
         captureNextFrame = false;
         clearTranslations();
 
-        ImageReader oldReader = imageReader;
-        ImageReader newReader = createImageReader(screenWidth, screenHeight);
-
         try {
-            virtualDisplay.resize(screenWidth, screenHeight, densityDpi);
+            virtualDisplay.resize(targetWidth, targetHeight, densityDpi);
             virtualDisplay.setSurface(newReader.getSurface());
+
             imageReader = newReader;
+            screenWidth = targetWidth;
+            screenHeight = targetHeight;
+
+            recreateTranslationLayer();
+            clampBubbleToScreen();
 
             if (oldReader != null) {
                 oldReader.setOnImageAvailableListener(null, null);
                 oldReader.close();
             }
-
-            if (bubbleView != null) {
-                bubbleParams.x = clamp(
-                        bubbleParams.x,
-                        0,
-                        Math.max(0, screenWidth - bubbleParams.width)
-                );
-                bubbleParams.y = clamp(
-                        bubbleParams.y,
-                        0,
-                        Math.max(0, screenHeight - bubbleParams.height)
-                );
-                windowManager.updateViewLayout(bubbleView, bubbleParams);
-            }
         } catch (Exception exception) {
             newReader.setOnImageAvailableListener(null, null);
             newReader.close();
             imageReader = oldReader;
-            showToast("Xoay màn hình chưa thành công, hãy bật lại bong bóng.");
+            screenWidth = oldWidth;
+            screenHeight = oldHeight;
+
+            try {
+                if (oldReader != null) {
+                    virtualDisplay.resize(oldWidth, oldHeight, densityDpi);
+                    virtualDisplay.setSurface(oldReader.getSurface());
+                }
+            } catch (Exception ignored) {
+                // Giữ phiên hiện tại nếu máy không cho khôi phục kích thước cũ.
+            }
+
+            showToast("Chưa đồng bộ được màn hình, hãy chạm 译 lại.");
+        }
+    }
+
+    private void ensureOverlayGeometry() {
+        if (translationLayer == null || translationLayerParams == null) {
+            return;
+        }
+
+        translationLayerParams.width = Math.max(1, screenWidth);
+        translationLayerParams.height = Math.max(1, screenHeight);
+        translationLayerParams.x = 0;
+        translationLayerParams.y = 0;
+
+        try {
+            windowManager.updateViewLayout(translationLayer, translationLayerParams);
+        } catch (Exception ignored) {
+            // Lớp phủ có thể đang được tái tạo.
+        }
+    }
+
+    private void recreateTranslationLayer() {
+        if (translationLayer != null) {
+            try {
+                windowManager.removeViewImmediate(translationLayer);
+            } catch (Exception ignored) {
+                // Lớp phủ đã được gỡ.
+            }
+            translationLayer = null;
+            translationLayerParams = null;
+        }
+        createTranslationLayer();
+    }
+
+    private void clampBubbleToScreen() {
+        if (bubbleView == null || bubbleParams == null) {
+            return;
+        }
+
+        bubbleParams.x = clamp(
+                bubbleParams.x,
+                0,
+                Math.max(0, screenWidth - bubbleParams.width)
+        );
+        bubbleParams.y = clamp(
+                bubbleParams.y,
+                0,
+                Math.max(0, screenHeight - bubbleParams.height)
+        );
+
+        try {
+            windowManager.updateViewLayout(bubbleView, bubbleParams);
+        } catch (Exception ignored) {
+            // Dịch vụ có thể đang dừng.
         }
     }
 
@@ -979,6 +1103,15 @@ public class BubbleService extends Service {
     private void showToast(String message) {
         mainHandler.post(() ->
                 Toast.makeText(getApplicationContext(), message, Toast.LENGTH_SHORT).show());
+    }
+
+    private boolean hasSameOrientation(
+            int firstWidth,
+            int firstHeight,
+            int secondWidth,
+            int secondHeight
+    ) {
+        return (firstWidth >= firstHeight) == (secondWidth >= secondHeight);
     }
 
     private String readableError(Exception exception) {

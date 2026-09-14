@@ -39,26 +39,26 @@ jobs:
         run: gradle --no-daemon --stacktrace assembleRelease
 
       - name: Đổi tên APK
-        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.2.0-arm64.apk
+        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.3.0-arm64.apk
 
       - name: Lưu APK trong Actions
         uses: actions/upload-artifact@v4
         with:
-          name: BongBongDich-v1.2.0-arm64
-          path: BongBongDich-v1.2.0-arm64.apk
+          name: BongBongDich-v1.3.0-arm64
+          path: BongBongDich-v1.3.0-arm64.apk
           if-no-files-found: error
           retention-days: 90
 
-      - name: Tạo bản phát hành v1.2.0
+      - name: Tạo bản phát hành v1.3.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.0
-          name: Bong Bóng Dịch v1.2.0
+          tag_name: v1.3.0
+          name: Bong Bóng Dịch v1.3.0
           body: |
-            Sửa vị trí lớp dịch trên màn hình ngang và ngăn các ô dịch chồng chéo.
+            Đồng bộ ảnh chụp và lớp phủ theo kích thước thật sau mỗi lần xoay màn hình.
             
-            Ô tiếng Việt được giới hạn theo đúng vùng chữ gốc và tự co cỡ chữ để không tràn.
-            Chạm 译 để dịch; bong bóng đổi thành ×, chạm lần nữa để tắt toàn bộ bản dịch.
-          files: BongBongDich-v1.2.0-arm64.apk
+            Chặn ảnh cũ sai chiều để không còn dồn bản dịch xuống mép dưới.
+            Ép chụp toàn bộ màn hình, giữ ô dịch đúng vị trí và nút 译 / × để bật tắt.
+          files: BongBongDich-v1.3.0-arm64.apk
           make_latest: true
           overwrite_files: true
