@@ -85,10 +85,9 @@ public class BubbleService extends Service {
 
     private static final String CHANNEL_ID = "bubble_translate_channel";
     private static final int NOTIFICATION_ID = 2409;
-    private static final int MAX_REGIONS = 32;
-    private static final int MAX_OCR_LONG_EDGE = 3000;
+    private static final int MAX_REGIONS = 24;
+    private static final int MAX_OCR_LONG_EDGE = 2200;
     private static final int MAX_BATCH_CHARACTERS = 2600;
-    private static final int SMART_SENTENCE_MIN_CHARACTERS = 12;
     private static final Pattern BATCH_MARKER_PATTERN = Pattern.compile(
             "\\[\\s*\\[\\s*\\[\\s*BBD\\s*[_-]?\\s*(\\d+)"
                     + "\\s*\\]\\s*\\]\\s*\\]",
@@ -97,8 +96,6 @@ public class BubbleService extends Service {
     private static final String ONLINE_TRANSLATE_URL =
             "https://translate.googleapis.com/translate_a/single"
                     + "?client=gtx&sl=zh-CN&tl=vi&dt=t";
-    private static final Map<String, String> BUILT_IN_GLOSSARY =
-            createBuiltInGlossary();
 
     private WindowManager windowManager;
     private TextView bubbleView;
@@ -471,177 +468,7 @@ public class BubbleService extends Service {
         }
         return text.trim()
                 .replaceAll("[\\t ]+", " ")
-                .replaceAll(
-                        "(?<=[\\u3400-\\u9FFF\\uF900-\\uFAFF]) "
-                                + "(?=[\\u3400-\\u9FFF\\uF900-\\uFAFF])",
-                        ""
-                )
                 .replaceAll("\\n{3,}", "\n\n");
-    }
-
-    private static Map<String, String> createBuiltInGlossary() {
-        Map<String, String> terms = new HashMap<>();
-
-        // Tên riêng và thuật ngữ thường gặp trong game Trung/Naruto.
-        terms.put("橙色忍魂碎片", "mảnh Nhẫn Hồn màu cam");
-        terms.put("高级招募券", "vé chiêu mộ cao cấp");
-        terms.put("普通招募券", "vé chiêu mộ thường");
-        terms.put("宇智波佐助", "Uchiha Sasuke");
-        terms.put("漩涡鸣人", "Uzumaki Naruto");
-        terms.put("旗木卡卡西", "Hatake Kakashi");
-        terms.put("春野樱", "Haruno Sakura");
-        terms.put("火影忍者", "Naruto");
-        terms.put("晓组织", "tổ chức Akatsuki");
-        terms.put("忍魂碎片", "mảnh Nhẫn Hồn");
-        terms.put("灵魂碎片", "mảnh linh hồn");
-        terms.put("万能碎片", "mảnh vạn năng");
-        terms.put("升星材料", "nguyên liệu tăng sao");
-        terms.put("合成材料", "nguyên liệu ghép");
-        terms.put("属性加成", "cộng thuộc tính");
-        terms.put("技能效果", "hiệu quả kỹ năng");
-        terms.put("解锁条件", "điều kiện mở khóa");
-        terms.put("获取途径", "cách nhận");
-        terms.put("当前拥有", "hiện có");
-        terms.put("所需材料", "nguyên liệu cần");
-        terms.put("每日任务", "nhiệm vụ hằng ngày");
-        terms.put("主线任务", "nhiệm vụ chính");
-        terms.put("支线任务", "nhiệm vụ phụ");
-        terms.put("限时活动", "sự kiện giới hạn");
-        terms.put("战斗力", "lực chiến");
-        terms.put("攻击力", "công");
-        terms.put("防御力", "thủ");
-        terms.put("生命值", "sinh lực");
-        terms.put("暴击率", "tỷ lệ bạo kích");
-        terms.put("命中率", "tỷ lệ chính xác");
-        terms.put("闪避率", "tỷ lệ né");
-        terms.put("十连抽", "quay 10 lần");
-        terms.put("限定招募", "chiêu mộ giới hạn");
-        terms.put("忍魂", "Nhẫn Hồn");
-        terms.put("鸣人", "Naruto");
-        terms.put("佐助", "Sasuke");
-        terms.put("小樱", "Sakura");
-        terms.put("卡卡西", "Kakashi");
-        terms.put("查克拉", "chakra");
-        terms.put("忍术", "nhẫn thuật");
-        terms.put("体术", "thể thuật");
-        terms.put("幻术", "ảo thuật");
-        terms.put("尾兽", "Vĩ thú");
-        terms.put("忍者", "ninja");
-        terms.put("火影", "Hokage");
-        terms.put("战力", "lực chiến");
-        terms.put("副本", "phó bản");
-        terms.put("关卡", "ải");
-        terms.put("阵容", "đội hình");
-        terms.put("招募", "chiêu mộ");
-        terms.put("召唤", "triệu hồi");
-        terms.put("装备", "trang bị");
-        terms.put("道具", "vật phẩm");
-        terms.put("碎片", "mảnh");
-        terms.put("羁绊", "duyên");
-        terms.put("觉醒", "thức tỉnh");
-        terms.put("进阶", "tiến bậc");
-        terms.put("突破", "đột phá");
-        terms.put("升星", "tăng sao");
-        terms.put("强化", "cường hóa");
-        terms.put("扫荡", "quét");
-        terms.put("通关", "vượt ải");
-        terms.put("橙色", "màu cam");
-        terms.put("红色", "màu đỏ");
-        terms.put("金色", "màu vàng kim");
-        terms.put("紫色", "màu tím");
-
-        // Thuật ngữ công việc/sản xuất người dùng thường đọc trên màn hình.
-        terms.put("不合格产品", "sản phẩm không đạt");
-        terms.put("不合格品", "hàng không đạt");
-        terms.put("生产过程中", "trong quá trình sản xuất");
-        terms.put("生产过程", "quá trình sản xuất");
-        terms.put("生产工艺", "quy trình sản xuất");
-        terms.put("生产部门", "bộ phận sản xuất");
-        terms.put("品质部门", "bộ phận chất lượng");
-        terms.put("质量部门", "bộ phận chất lượng");
-        terms.put("质量管理", "quản lý chất lượng");
-        terms.put("检查结果", "kết quả kiểm tra");
-        terms.put("检验结果", "kết quả kiểm tra");
-        terms.put("改善措施", "biện pháp cải thiện");
-        terms.put("纠正措施", "biện pháp khắc phục");
-        terms.put("预防措施", "biện pháp phòng ngừa");
-        terms.put("原因分析", "phân tích nguyên nhân");
-        terms.put("根本原因", "nguyên nhân gốc");
-        terms.put("不良原因", "nguyên nhân lỗi");
-        terms.put("不良比例", "tỷ lệ lỗi");
-        terms.put("出货日期", "ngày xuất hàng");
-        terms.put("交货日期", "ngày giao hàng");
-        terms.put("交货期", "thời hạn giao hàng");
-        terms.put("作业指导书", "hướng dẫn thao tác");
-        terms.put("标准作业", "thao tác tiêu chuẩn");
-        terms.put("标准工时", "thời gian tiêu chuẩn");
-        terms.put("节拍时间", "thời gian chu kỳ");
-        terms.put("首件确认", "xác nhận sản phẩm đầu tiên");
-        terms.put("外观检查", "kiểm tra ngoại quan");
-        terms.put("来料检验", "kiểm tra nguyên liệu đầu vào");
-        terms.put("出货检验", "kiểm tra xuất hàng");
-        terms.put("检验报告", "báo cáo kiểm tra");
-        terms.put("不良报告", "báo cáo lỗi");
-        terms.put("改善报告", "báo cáo cải thiện");
-        terms.put("品质异常", "bất thường chất lượng");
-        terms.put("工装夹具", "đồ gá");
-        terms.put("原材料", "nguyên vật liệu");
-        terms.put("半成品", "bán thành phẩm");
-        terms.put("成品", "thành phẩm");
-        terms.put("生产部", "bộ phận sản xuất");
-        terms.put("品质部", "bộ phận chất lượng");
-        terms.put("质量部", "bộ phận chất lượng");
-        terms.put("质检部", "bộ phận kiểm tra chất lượng");
-        terms.put("生产线", "chuyền sản xuất");
-        terms.put("操作员", "công nhân thao tác");
-        terms.put("作业员", "công nhân thao tác");
-        terms.put("不良率", "tỷ lệ lỗi");
-        terms.put("不良品", "hàng lỗi");
-        terms.put("合格品", "hàng đạt");
-        terms.put("全数检查", "kiểm tra 100%");
-        terms.put("全检", "kiểm tra 100%");
-        terms.put("抽检", "kiểm tra lấy mẫu");
-        terms.put("返工", "làm lại");
-        terms.put("报废", "loại bỏ");
-        terms.put("漏装", "lắp thiếu");
-        terms.put("反装", "lắp ngược");
-        terms.put("混装", "lẫn hàng");
-        terms.put("欠数", "thiếu số lượng");
-        terms.put("试模", "thử khuôn");
-        terms.put("出货", "xuất hàng");
-        terms.put("发货", "giao hàng");
-        terms.put("包装", "đóng gói");
-        terms.put("组装", "lắp ráp");
-        terms.put("装配", "lắp ráp");
-        terms.put("注塑", "ép nhựa");
-        terms.put("喷油", "phun sơn");
-        terms.put("移印", "in tampo");
-        terms.put("物料", "vật liệu");
-        terms.put("模具", "khuôn");
-        terms.put("夹具", "đồ gá");
-        terms.put("治具", "đồ gá");
-        terms.put("样品", "mẫu");
-        terms.put("样板", "mẫu chuẩn");
-        terms.put("供应商", "nhà cung cấp");
-
-        List<Map.Entry<String, String>> sorted =
-                new ArrayList<>(terms.entrySet());
-        sorted.sort((first, second) -> {
-            int lengthComparison = Integer.compare(
-                    second.getKey().length(),
-                    first.getKey().length()
-            );
-            if (lengthComparison != 0) {
-                return lengthComparison;
-            }
-            return first.getKey().compareTo(second.getKey());
-        });
-
-        LinkedHashMap<String, String> ordered = new LinkedHashMap<>();
-        for (Map.Entry<String, String> entry : sorted) {
-            ordered.put(entry.getKey(), entry.getValue());
-        }
-        return ordered;
     }
 
     private void translateRegions(List<OcrRegion> regions, Bitmap capturedScreen) {
@@ -697,42 +524,12 @@ public class BubbleService extends Service {
         return prepared;
     }
 
-    private String applyPreferredGlossaryToSource(String source) {
-        String prepared = applyCustomGlossaryToSource(source);
-        if (TextUtils.isEmpty(prepared)) {
-            return prepared;
-        }
-
-        for (Map.Entry<String, String> entry : BUILT_IN_GLOSSARY.entrySet()) {
-            String chinese = entry.getKey();
-            if (prepared.contains(chinese)) {
-                prepared = prepared.replace(
-                        chinese,
-                        "「" + entry.getValue() + "」"
-                );
-            }
-        }
-        return prepared;
-    }
-
     private boolean sourceUsesCustomGlossary(String source) {
         if (TextUtils.isEmpty(source) || customGlossary.isEmpty()) {
             return false;
         }
         for (String chinese : customGlossary.keySet()) {
             if (!TextUtils.isEmpty(chinese) && source.contains(chinese)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean sourceUsesBuiltInGlossary(String source) {
-        if (TextUtils.isEmpty(source)) {
-            return false;
-        }
-        for (String chinese : BUILT_IN_GLOSSARY.keySet()) {
-            if (source.contains(chinese)) {
                 return true;
             }
         }
@@ -762,22 +559,10 @@ public class BubbleService extends Service {
             return;
         }
 
-        showToast("Đang dịch thông minh theo ngữ cảnh…");
+        showToast("Đang dịch nhanh toàn màn hình…");
 
         int generation = captureSequence;
-        List<OcrRegion> orderedRegions = new ArrayList<>(regions);
-        orderedRegions.sort((first, second) -> {
-            int topComparison = Integer.compare(
-                    first.bounds.top,
-                    second.bounds.top
-            );
-            if (topComparison != 0) {
-                return topComparison;
-            }
-            return Integer.compare(first.bounds.left, second.bounds.left);
-        });
-
-        List<List<OcrRegion>> batches = buildRegionBatches(orderedRegions);
+        List<List<OcrRegion>> batches = buildRegionBatches(regions);
         List<CompletableFuture<List<RegionTranslation>>> futures = new ArrayList<>();
 
         for (List<OcrRegion> batch : batches) {
@@ -832,19 +617,6 @@ public class BubbleService extends Service {
         int currentCharacters = 0;
 
         for (OcrRegion region : regions) {
-            if (shouldTranslateIndividually(region)) {
-                if (!currentBatch.isEmpty()) {
-                    batches.add(currentBatch);
-                    currentBatch = new ArrayList<>();
-                    currentCharacters = 0;
-                }
-
-                List<OcrRegion> preciseBatch = new ArrayList<>();
-                preciseBatch.add(region);
-                batches.add(preciseBatch);
-                continue;
-            }
-
             int sourceLength = Math.min(region.source.length(), 900);
             int estimatedCharacters = sourceLength + 24;
 
@@ -863,18 +635,6 @@ public class BubbleService extends Service {
             batches.add(currentBatch);
         }
         return batches;
-    }
-
-    private boolean shouldTranslateIndividually(OcrRegion region) {
-        if (region == null || TextUtils.isEmpty(region.source)) {
-            return false;
-        }
-
-        String source = region.source;
-        return region.lineCount > 1
-                || source.length() >= SMART_SENTENCE_MIN_CHARACTERS
-                || source.indexOf('\n') >= 0
-                || source.matches(".*[，。！？；：,.!?;:].*");
     }
 
     private List<RegionTranslation> translateBatchOnline(
@@ -922,25 +682,11 @@ public class BubbleService extends Service {
             batchRequest
                     .append(batchMarker(markerIndex))
                     .append('\n')
-                    .append(applyPreferredGlossaryToSource(source))
-                    .append("\n\n");
+                    .append(applyCustomGlossaryToSource(source))
+                    .append('\n');
         }
 
         if (pendingRegions.isEmpty()) {
-            return results;
-        }
-
-        // Đoạn hội thoại/mô tả dài được gửi riêng, không chèn ký hiệu chia ô.
-        // Google nhờ vậy nhìn thấy nguyên câu tự nhiên và ít dịch từng chữ hơn.
-        if (pendingRegions.size() == 1
-                && shouldTranslateIndividually(pendingRegions.get(0))) {
-            RegionTranslation precise = translateRegionOnline(
-                    pendingRegions.get(0),
-                    generation
-            );
-            if (precise != null && !TextUtils.isEmpty(precise.translated)) {
-                results.add(precise);
-            }
             return results;
         }
 
@@ -1064,7 +810,7 @@ public class BubbleService extends Service {
 
         try {
             String translated = translateOnline(
-                    applyPreferredGlossaryToSource(source)
+                    applyCustomGlossaryToSource(source)
             );
             String compact = compactTranslation(source, translated);
             cacheTranslation(source, compact);
@@ -1102,7 +848,7 @@ public class BubbleService extends Service {
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty(
                     "User-Agent",
-                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.9"
+                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.8"
             );
             connection.setFixedLengthStreamingMode(body.length);
 
@@ -1219,11 +965,7 @@ public class BubbleService extends Service {
     }
 
     private String exactGameTranslation(String source) {
-        String key = normalizeGlossaryKey(source);
-        String preferred = BUILT_IN_GLOSSARY.get(key);
-        if (!TextUtils.isEmpty(preferred)) {
-            return preferred;
-        }
+        String key = source.replaceAll("[\\[\\]【】（）()\\s:：]", "");
 
         switch (key) {
             case "活动":
@@ -1375,8 +1117,7 @@ public class BubbleService extends Service {
                 .replaceAll("^\\s*\\[", "")
                 .replaceAll("\\]\\s*$", "");
 
-        if (sourceUsesCustomGlossary(source)
-                || sourceUsesBuiltInGlossary(source)) {
+        if (sourceUsesCustomGlossary(source)) {
             return result
                     .replace("「", "")
                     .replace("」", "")

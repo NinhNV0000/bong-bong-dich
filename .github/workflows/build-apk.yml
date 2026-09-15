@@ -41,28 +41,27 @@ jobs:
         run: gradle --no-daemon --stacktrace assembleRelease
 
       - name: Đổi tên APK
-        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.9.0-arm64.apk
+        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.9.1-arm64.apk
 
       - name: Lưu APK trong Actions
         uses: actions/upload-artifact@v4
         with:
-          name: BongBongDich-v1.9.0-arm64
-          path: BongBongDich-v1.9.0-arm64.apk
+          name: BongBongDich-v1.9.1-arm64
+          path: BongBongDich-v1.9.1-arm64.apk
           if-no-files-found: error
           retention-days: 90
 
-      - name: Tạo bản phát hành v1.9.0
+      - name: Tạo bản phát hành v1.9.1
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.9.0
-          name: Bong Bóng Dịch v1.9.0
+          tag_name: v1.9.1
+          name: Bong Bóng Dịch v1.9.1
           body: |
-            Nâng độ chính xác bằng chế độ dịch lai theo ngữ cảnh.
+            Bản vá khẩn cấp sau phản hồi thực tế của người dùng.
 
-            Câu dài, hội thoại và mô tả được dịch riêng nguyên đoạn; nút và nhãn ngắn vẫn gom lô để giữ tốc độ.
-            OCR dùng ảnh nét hơn và hỗ trợ nhiều vùng chữ hơn trên cùng màn hình.
-            Bổ sung từ điển tự động cho game, Naruto và thuật ngữ sản xuất/chất lượng.
-            Từ điển người dùng tự dạy vẫn có mức ưu tiên cao nhất.
-          files: BongBongDich-v1.9.0-arm64.apk
+            Gỡ toàn bộ cơ chế chèn thuật ngữ và tách câu thử nghiệm của v1.9.0.
+            Khôi phục nguyên bộ dịch ổn định của v1.8.0.
+            Giữ giao diện mới, ảnh dịch toàn màn hình và Từ điển chuyên ngành người dùng tự dạy.
+          files: BongBongDich-v1.9.1-arm64.apk
           make_latest: true
           overwrite_files: true

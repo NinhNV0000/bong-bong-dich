@@ -2,12 +2,10 @@
 
 Ứng dụng Android nhận chữ Trung trong game và phủ bản dịch tiếng Việt ngay tại vị trí tương ứng.
 
-## Phiên bản 1.9.0
+## Phiên bản 1.9.1
 
-- Dịch lai theo ngữ cảnh: câu dài, hội thoại và mô tả được gửi riêng nguyên đoạn để tránh dịch từng chữ.
-- Nút và nhãn ngắn vẫn được gom lô để giữ tốc độ phản hồi.
-- OCR dùng ảnh nét hơn, nhận tối đa 32 vùng chữ trong một màn hình.
-- Bổ sung từ điển tự động cho game, Naruto và thuật ngữ sản xuất/chất lượng.
+- Khôi phục nguyên bộ dịch ổn định của v1.8.0 sau khi thử nghiệm v1.9.0 cho kết quả kém hơn.
+- Gỡ cơ chế tự chèn quá nhiều thuật ngữ vào câu Trung và tách riêng câu dài.
 - Giao diện sáng xanh, gọn hơn và icon mới theo thiết kế của người dùng.
 - Thêm Từ điển chuyên ngành để tự dạy chữ Trung → cách dịch tiếng Việt.
 - Có thể thêm, sửa, xóa riêng từng thuật ngữ hoặc xóa toàn bộ; dữ liệu được lưu trên máy.
