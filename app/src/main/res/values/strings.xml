@@ -1,13 +1,14 @@
 <resources>
     <string name="app_name">Bong Bóng Dịch</string>
     <string name="app_title">Bong Bóng Dịch</string>
-    <string name="app_subtitle">Dịch nhanh chữ Trung ngay trên game — đúng vị trí, không cần chuyển ứng dụng</string>
+    <string name="app_subtitle">Chụp nhanh màn hình, thay chữ Trung bằng tiếng Việt rồi trở lại game</string>
     <string name="online_badge">● ONLINE  •  TRUNG → VIỆT</string>
     <string name="how_to_title">DỊCH TRỰC TIẾP</string>
     <string name="how_to_steps">1  Bật bong bóng và chia sẻ toàn bộ màn hình
-2  Chạm 译 để dịch; chạm × để ẩn bản dịch
-3  Kéo bong bóng xuống vùng đỏ rồi thả để tắt hẳn</string>
-    <string name="speed_note">⚡ Dịch theo lô và ghi nhớ câu cũ để phản hồi nhanh hơn</string>
+2  Chạm 译 để tạo ảnh dịch toàn màn hình
+3  Đọc xong chạm × để trở lại game
+4  Kéo bong bóng xuống vùng đỏ để tắt hẳn</string>
+    <string name="speed_note">✦ Chữ Việt được đặt trực tiếp vào ảnh giống chế độ dịch màn hình</string>
     <string name="privacy_note">Ảnh màn hình được OCR trong điện thoại và không lưu lại. Chỉ phần chữ nhận được được gửi tới bộ dịch online.</string>
     <string name="status_off">Chưa bật bong bóng</string>
     <string name="button_start">Bật dịch trên màn hình</string>

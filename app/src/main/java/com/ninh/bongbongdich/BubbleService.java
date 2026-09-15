@@ -36,6 +36,7 @@ import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -107,6 +108,9 @@ public class BubbleService extends Service {
 
     private FrameLayout translationLayer;
     private WindowManager.LayoutParams translationLayerParams;
+    private ImageView frozenScreenView;
+    private TextView frozenScreenBar;
+    private Bitmap frozenScreenBitmap;
     private final List<Rect> placedTranslationBounds = new ArrayList<>();
     private final List<Rect> sourceTranslationBounds = new ArrayList<>();
     private boolean translationsVisible;
@@ -381,7 +385,7 @@ public class BubbleService extends Service {
                         return;
                     }
 
-                    translateRegions(regions);
+                    translateRegions(regions, bitmap);
                 })
                 .addOnFailureListener(exception ->
                         showFailure("Không nhận dạng được chữ: " + readableError(exception)))
@@ -389,7 +393,7 @@ public class BubbleService extends Service {
                     if (ocrBitmap != bitmap && !ocrBitmap.isRecycled()) {
                         ocrBitmap.recycle();
                     }
-                    if (!bitmap.isRecycled()) {
+                    if (bitmap != frozenScreenBitmap && !bitmap.isRecycled()) {
                         bitmap.recycle();
                     }
                 });
@@ -464,8 +468,9 @@ public class BubbleService extends Service {
                 .replaceAll("\\n{3,}", "\n\n");
     }
 
-    private void translateRegions(List<OcrRegion> regions) {
+    private void translateRegions(List<OcrRegion> regions, Bitmap capturedScreen) {
         clearTranslations();
+        showFrozenScreen(capturedScreen);
         prepareSourceBounds(regions);
         performRegionTranslations(regions);
     }
@@ -764,7 +769,7 @@ public class BubbleService extends Service {
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty(
                     "User-Agent",
-                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.6"
+                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.7"
             );
             connection.setFixedLengthStreamingMode(body.length);
 
@@ -852,6 +857,9 @@ public class BubbleService extends Service {
                 displayed++;
             }
         }
+        if (frozenScreenBar != null) {
+            frozenScreenBar.bringToFront();
+        }
         return displayed;
     }
 
@@ -866,13 +874,14 @@ public class BubbleService extends Service {
 
         busy = false;
         updateBubbleVisual();
+        updateFrozenScreenBar(displayedCount, failedCount);
 
         if (displayedCount == 0) {
-            showToast("Dịch online thất bại. Kiểm tra mạng rồi chạm 译 lại.");
+            showToast("Dịch thất bại. Chạm × để đóng rồi thử lại.");
         } else if (failedCount > 0) {
-            showToast("Đã dịch; " + failedCount + " ô bị lỗi, chạm lại để thử.");
+            showToast("Đã tạo ảnh dịch; còn " + failedCount + " ô bị lỗi.");
         } else {
-            showToast("Đã dịch online. Chạm × để ẩn.");
+            showToast("Đã dịch toàn màn hình. Chạm × để trở lại game.");
         }
     }
 
@@ -1105,9 +1114,120 @@ public class BubbleService extends Service {
                 PixelFormat.TRANSLUCENT
         );
         translationLayerParams.gravity = Gravity.TOP | Gravity.START;
-        translationLayerParams.alpha = 0.79f;
+        translationLayerParams.alpha = 1f;
 
         windowManager.addView(translationLayer, translationLayerParams);
+    }
+
+    private void showFrozenScreen(Bitmap bitmap) {
+        if (translationLayer == null || bitmap == null || bitmap.isRecycled()) {
+            return;
+        }
+
+        frozenScreenBitmap = bitmap;
+        frozenScreenView = new ImageView(this);
+        frozenScreenView.setScaleType(ImageView.ScaleType.FIT_XY);
+        frozenScreenView.setImageBitmap(bitmap);
+        frozenScreenView.setContentDescription("Ảnh màn hình đang được dịch");
+
+        FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        );
+        translationLayer.addView(frozenScreenView, imageParams);
+
+        createFrozenScreenBar();
+        translationsVisible = true;
+        translationLayer.setVisibility(View.VISIBLE);
+        translationLayer.setClickable(true);
+        translationLayer.setOnTouchListener((view, event) -> true);
+        setTranslationLayerTouchBlocking(true);
+        updateBubbleVisual();
+    }
+
+    private void createFrozenScreenBar() {
+        if (translationLayer == null || frozenScreenBar != null) {
+            return;
+        }
+
+        frozenScreenBar = new TextView(this);
+        frozenScreenBar.setText("✦  Đang nhận dạng và dịch…");
+        frozenScreenBar.setTextColor(Color.parseColor("#172033"));
+        frozenScreenBar.setTextSize(14);
+        frozenScreenBar.setTypeface(
+                Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        );
+        frozenScreenBar.setGravity(Gravity.CENTER);
+        frozenScreenBar.setIncludeFontPadding(false);
+        frozenScreenBar.setPadding(dp(18), 0, dp(18), 0);
+        frozenScreenBar.setElevation(dp(14));
+        frozenScreenBar.setOnClickListener(view -> handleBubbleTap());
+
+        GradientDrawable barBackground = new GradientDrawable();
+        barBackground.setShape(GradientDrawable.RECTANGLE);
+        barBackground.setColor(Color.parseColor("#F5FFFFFF"));
+        barBackground.setCornerRadius(dp(30));
+        barBackground.setStroke(dp(1), Color.parseColor("#22000000"));
+        frozenScreenBar.setBackground(barBackground);
+
+        int barWidth = Math.min(dp(330), Math.max(dp(250), screenWidth - dp(36)));
+        FrameLayout.LayoutParams barParams = new FrameLayout.LayoutParams(
+                barWidth,
+                dp(56),
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL
+        );
+        barParams.bottomMargin = dp(26);
+        translationLayer.addView(frozenScreenBar, barParams);
+    }
+
+    private void updateFrozenScreenBar(int displayedCount, int failedCount) {
+        if (frozenScreenBar == null) {
+            return;
+        }
+
+        if (displayedCount <= 0) {
+            frozenScreenBar.setText("Không dịch được  •  Chạm để đóng ×");
+        } else if (failedCount > 0) {
+            frozenScreenBar.setText(
+                    "✦  Trung → Việt  •  Thiếu " + failedCount + " ô  •  Đóng ×"
+            );
+        } else {
+            frozenScreenBar.setText("✦  Trung → Việt  •  Chạm để đóng ×");
+        }
+        frozenScreenBar.bringToFront();
+    }
+
+    private void setTranslationLayerTouchBlocking(boolean blocking) {
+        if (translationLayer == null || translationLayerParams == null) {
+            return;
+        }
+
+        if (blocking) {
+            translationLayerParams.flags &=
+                    ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+        } else {
+            translationLayerParams.flags |=
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+        }
+
+        try {
+            windowManager.updateViewLayout(translationLayer, translationLayerParams);
+        } catch (Exception ignored) {
+            // Lớp phủ có thể đang được tạo lại hoặc dịch vụ đang dừng.
+        }
+    }
+
+    private void releaseFrozenScreen() {
+        if (frozenScreenView != null) {
+            frozenScreenView.setImageDrawable(null);
+            frozenScreenView = null;
+        }
+        frozenScreenBar = null;
+
+        if (frozenScreenBitmap != null && !frozenScreenBitmap.isRecycled()) {
+            frozenScreenBitmap.recycle();
+        }
+        frozenScreenBitmap = null;
     }
 
     private boolean addTranslationAtPosition(OcrRegion region, String translated) {
@@ -1133,14 +1253,15 @@ public class BubbleService extends Service {
             return false;
         }
 
+        OverlayStyle overlayStyle = sampleOverlayStyle(displayBounds);
         TextView label = new TextView(this);
         label.setText(translated);
-        label.setTextColor(Color.WHITE);
-        label.setTypeface(Typeface.DEFAULT_BOLD);
+        label.setTextColor(overlayStyle.textColor);
+        label.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         label.setGravity(region.lineCount > 1
                 ? Gravity.START | Gravity.CENTER_VERTICAL
                 : Gravity.CENTER);
-        label.setPadding(dp(2), 0, dp(2), 0);
+        label.setPadding(dp(1), 0, dp(1), 0);
         label.setLineSpacing(0, 0.96f);
         label.setIncludeFontPadding(false);
         label.setMaxLines(Math.max(
@@ -1156,9 +1277,8 @@ public class BubbleService extends Service {
         );
 
         GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.parseColor("#EC1A1722"));
-        background.setCornerRadius(dp(4));
-        background.setStroke(dp(1), Color.parseColor("#8F7BFF"));
+        background.setColor(overlayStyle.backgroundColor);
+        background.setCornerRadius(dp(2));
         label.setBackground(background);
 
         FrameLayout.LayoutParams labelParams = new FrameLayout.LayoutParams(
@@ -1169,11 +1289,104 @@ public class BubbleService extends Service {
         labelParams.topMargin = displayBounds.top;
 
         translationLayer.addView(label, labelParams);
+        if (frozenScreenBar != null) {
+            frozenScreenBar.bringToFront();
+        }
         placedTranslationBounds.add(new Rect(displayBounds));
         translationsVisible = true;
         translationLayer.setVisibility(View.VISIBLE);
         updateBubbleVisual();
         return true;
+    }
+
+    private OverlayStyle sampleOverlayStyle(Rect overlayBounds) {
+        Bitmap bitmap = frozenScreenBitmap;
+        if (bitmap == null || bitmap.isRecycled() || translationLayer == null) {
+            return new OverlayStyle(
+                    Color.parseColor("#F21A1722"),
+                    Color.WHITE
+            );
+        }
+
+        int overlayWidth = translationLayer.getWidth() > 0
+                ? translationLayer.getWidth()
+                : screenWidth;
+        int overlayHeight = translationLayer.getHeight() > 0
+                ? translationLayer.getHeight()
+                : screenHeight;
+        float scaleX = bitmap.getWidth() / (float) Math.max(1, overlayWidth);
+        float scaleY = bitmap.getHeight() / (float) Math.max(1, overlayHeight);
+
+        int left = clamp(
+                Math.round(overlayBounds.left * scaleX),
+                0,
+                bitmap.getWidth() - 1
+        );
+        int top = clamp(
+                Math.round(overlayBounds.top * scaleY),
+                0,
+                bitmap.getHeight() - 1
+        );
+        int right = clamp(
+                Math.round(overlayBounds.right * scaleX) - 1,
+                left,
+                bitmap.getWidth() - 1
+        );
+        int bottom = clamp(
+                Math.round(overlayBounds.bottom * scaleY) - 1,
+                top,
+                bitmap.getHeight() - 1
+        );
+
+        int marginX = Math.max(2, Math.round(dp(3) * scaleX));
+        int marginY = Math.max(2, Math.round(dp(3) * scaleY));
+        int sampleLeft = clamp(left - marginX, 0, bitmap.getWidth() - 1);
+        int sampleRight = clamp(right + marginX, 0, bitmap.getWidth() - 1);
+        int sampleTop = clamp(top - marginY, 0, bitmap.getHeight() - 1);
+        int sampleBottom = clamp(bottom + marginY, 0, bitmap.getHeight() - 1);
+        int stepX = Math.max(1, (right - left + 1) / 10);
+        int stepY = Math.max(1, (bottom - top + 1) / 8);
+
+        long red = 0;
+        long green = 0;
+        long blue = 0;
+        int samples = 0;
+
+        for (int x = left; x <= right; x += stepX) {
+            int topColor = bitmap.getPixel(x, sampleTop);
+            int bottomColor = bitmap.getPixel(x, sampleBottom);
+            red += Color.red(topColor) + Color.red(bottomColor);
+            green += Color.green(topColor) + Color.green(bottomColor);
+            blue += Color.blue(topColor) + Color.blue(bottomColor);
+            samples += 2;
+        }
+        for (int y = top; y <= bottom; y += stepY) {
+            int leftColor = bitmap.getPixel(sampleLeft, y);
+            int rightColor = bitmap.getPixel(sampleRight, y);
+            red += Color.red(leftColor) + Color.red(rightColor);
+            green += Color.green(leftColor) + Color.green(rightColor);
+            blue += Color.blue(leftColor) + Color.blue(rightColor);
+            samples += 2;
+        }
+
+        if (samples <= 0) {
+            return new OverlayStyle(
+                    Color.parseColor("#F21A1722"),
+                    Color.WHITE
+            );
+        }
+
+        int averageRed = clamp((int) (red / samples), 0, 255);
+        int averageGreen = clamp((int) (green / samples), 0, 255);
+        int averageBlue = clamp((int) (blue / samples), 0, 255);
+        int backgroundColor = Color.rgb(averageRed, averageGreen, averageBlue);
+        double luminance = 0.299d * averageRed
+                + 0.587d * averageGreen
+                + 0.114d * averageBlue;
+        int textColor = luminance >= 148d
+                ? Color.parseColor("#352F2B")
+                : Color.WHITE;
+        return new OverlayStyle(backgroundColor, textColor);
     }
 
     private Rect chooseReadableBounds(
@@ -1305,10 +1518,14 @@ public class BubbleService extends Service {
         placedTranslationBounds.clear();
         sourceTranslationBounds.clear();
         translationsVisible = false;
+        releaseFrozenScreen();
 
         if (translationLayer != null) {
             translationLayer.removeAllViews();
             translationLayer.setVisibility(View.INVISIBLE);
+            translationLayer.setClickable(false);
+            translationLayer.setOnTouchListener(null);
+            setTranslationLayerTouchBlocking(false);
         }
 
         updateBubbleVisual();
@@ -1918,6 +2135,7 @@ public class BubbleService extends Service {
                 .putBoolean(KEY_RUNNING, false)
                 .apply();
 
+        releaseFrozenScreen();
         if (translationLayer != null) {
             try {
                 windowManager.removeView(translationLayer);
@@ -1991,6 +2209,16 @@ public class BubbleService extends Service {
         RegionTranslation(OcrRegion region, String translated) {
             this.region = region;
             this.translated = translated;
+        }
+    }
+
+    private static final class OverlayStyle {
+        final int backgroundColor;
+        final int textColor;
+
+        OverlayStyle(int backgroundColor, int textColor) {
+            this.backgroundColor = backgroundColor;
+            this.textColor = textColor;
         }
     }
 
