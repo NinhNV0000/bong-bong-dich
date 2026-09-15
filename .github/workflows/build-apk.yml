@@ -41,27 +41,28 @@ jobs:
         run: gradle --no-daemon --stacktrace assembleRelease
 
       - name: Đổi tên APK
-        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.8.0-arm64.apk
+        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.9.0-arm64.apk
 
       - name: Lưu APK trong Actions
         uses: actions/upload-artifact@v4
         with:
-          name: BongBongDich-v1.8.0-arm64
-          path: BongBongDich-v1.8.0-arm64.apk
+          name: BongBongDich-v1.9.0-arm64
+          path: BongBongDich-v1.9.0-arm64.apk
           if-no-files-found: error
           retention-days: 90
 
-      - name: Tạo bản phát hành v1.8.0
+      - name: Tạo bản phát hành v1.9.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.8.0
-          name: Bong Bóng Dịch v1.8.0
+          tag_name: v1.9.0
+          name: Bong Bóng Dịch v1.9.0
           body: |
-            Giao diện sáng xanh mới theo mẫu của người dùng và icon ứng dụng mới.
-            
-            Thêm Từ điển chuyên ngành: tự nhập chữ Trung và cách dịch tiếng Việt, sửa hoặc xóa bất cứ lúc nào.
-            Từ người dùng dạy được ưu tiên trước thuật ngữ mặc định và Google Translate.
-            Giữ chế độ ảnh dịch toàn màn hình cùng thao tác kéo bong bóng xuống × để tắt.
-          files: BongBongDich-v1.8.0-arm64.apk
+            Nâng độ chính xác bằng chế độ dịch lai theo ngữ cảnh.
+
+            Câu dài, hội thoại và mô tả được dịch riêng nguyên đoạn; nút và nhãn ngắn vẫn gom lô để giữ tốc độ.
+            OCR dùng ảnh nét hơn và hỗ trợ nhiều vùng chữ hơn trên cùng màn hình.
+            Bổ sung từ điển tự động cho game, Naruto và thuật ngữ sản xuất/chất lượng.
+            Từ điển người dùng tự dạy vẫn có mức ưu tiên cao nhất.
+          files: BongBongDich-v1.9.0-arm64.apk
           make_latest: true
           overwrite_files: true
