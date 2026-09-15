@@ -1,8 +1,10 @@
 package com.ninh.bongbongdich;
 
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -13,8 +15,11 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -27,11 +32,16 @@ public class GlossaryActivity extends AppCompatActivity {
     private TextView emptyText;
     private TextView clearAllButton;
     private TextView countText;
+    private TextView storageStatus;
+    private TextView storageButton;
     private String editingOriginal;
+    private boolean storagePromptShown;
+    private ActivityResultLauncher<Uri> storageDirectoryPicker;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        registerStorageDirectoryPicker();
         setContentView(R.layout.activity_glossary);
 
         chineseInput = findViewById(R.id.input_chinese);
@@ -40,12 +50,92 @@ public class GlossaryActivity extends AppCompatActivity {
         emptyText = findViewById(R.id.empty_text);
         clearAllButton = findViewById(R.id.button_clear_all);
         countText = findViewById(R.id.glossary_count);
+        storageStatus = findViewById(R.id.glossary_storage_status);
+        storageButton = findViewById(R.id.button_connect_storage);
 
         findViewById(R.id.button_back).setOnClickListener(view -> finish());
         findViewById(R.id.button_save_term).setOnClickListener(view -> saveTerm());
         clearAllButton.setOnClickListener(view -> confirmClearAll());
+        storageButton.setOnClickListener(view -> openStorageDirectoryPicker());
 
         renderEntries();
+        updateStorageStatus();
+    }
+
+    private void registerStorageDirectoryPicker() {
+        storageDirectoryPicker = registerForActivityResult(
+                new ActivityResultContracts.OpenDocumentTree(),
+                this::connectStorageDirectory
+        );
+    }
+
+    private void openStorageDirectoryPicker() {
+        storageDirectoryPicker.launch(null);
+    }
+
+    private void connectStorageDirectory(Uri uri) {
+        if (uri == null) {
+            return;
+        }
+
+        try {
+            getContentResolver().takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            );
+            GlossaryStore.ConnectionResult result =
+                    GlossaryStore.connectExternalDirectory(this, uri);
+            renderEntries();
+            updateStorageStatus();
+
+            String message = result.getImportedCount() > 0
+                    ? getString(
+                            R.string.storage_restored,
+                            result.getImportedCount(),
+                            result.getTotalCount()
+                    )
+                    : getString(R.string.storage_connected_success);
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        } catch (Exception error) {
+            updateStorageStatus();
+            Toast.makeText(
+                    this,
+                    getString(R.string.storage_connect_failed),
+                    Toast.LENGTH_LONG
+            ).show();
+        }
+    }
+
+    private void updateStorageStatus() {
+        boolean connected = GlossaryStore.isExternalConnected(this);
+        boolean syncOk = GlossaryStore.wasLastExternalSyncSuccessful(this);
+
+        if (connected && syncOk) {
+            storageStatus.setText(getString(
+                    R.string.storage_connected_status,
+                    GlossaryStore.getExternalLocationLabel()
+            ));
+            storageStatus.setTextColor(ContextCompat.getColor(
+                    this,
+                    R.color.success
+            ));
+            storageButton.setText(R.string.change_storage_folder);
+        } else if (connected) {
+            storageStatus.setText(R.string.storage_sync_failed_status);
+            storageStatus.setTextColor(ContextCompat.getColor(
+                    this,
+                    R.color.danger
+            ));
+            storageButton.setText(R.string.reconnect_storage_folder);
+        } else {
+            storageStatus.setText(R.string.storage_not_connected_status);
+            storageStatus.setTextColor(ContextCompat.getColor(
+                    this,
+                    R.color.text_secondary
+            ));
+            storageButton.setText(R.string.choose_storage_folder);
+        }
     }
 
     private void saveTerm() {
@@ -85,11 +175,40 @@ public class GlossaryActivity extends AppCompatActivity {
         vietnameseInput.clearFocus();
 
         renderEntries();
-        Toast.makeText(
-                this,
-                "Đã ghi nhớ: " + chinese + " → " + vietnamese,
-                Toast.LENGTH_SHORT
-        ).show();
+        updateStorageStatus();
+
+        if (GlossaryStore.isExternalConnected(this)
+                && !GlossaryStore.wasLastExternalSyncSuccessful(this)) {
+            Toast.makeText(
+                    this,
+                    R.string.term_saved_but_backup_failed,
+                    Toast.LENGTH_LONG
+            ).show();
+        } else {
+            Toast.makeText(
+                    this,
+                    "Đã ghi nhớ: " + chinese + " → " + vietnamese,
+                    Toast.LENGTH_SHORT
+            ).show();
+        }
+
+        if (!GlossaryStore.isExternalConnected(this)
+                && !storagePromptShown) {
+            storagePromptShown = true;
+            offerStorageConnection();
+        }
+    }
+
+    private void offerStorageConnection() {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.storage_prompt_title)
+                .setMessage(R.string.storage_prompt_message)
+                .setNegativeButton(R.string.storage_prompt_later, null)
+                .setPositiveButton(
+                        R.string.storage_prompt_choose,
+                        (dialog, which) -> openStorageDirectoryPicker()
+                )
+                .show();
     }
 
     private void renderEntries() {
@@ -162,6 +281,7 @@ public class GlossaryActivity extends AppCompatActivity {
                 vietnameseInput.setText("");
             }
             renderEntries();
+            updateStorageStatus();
         });
 
         LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
@@ -201,6 +321,7 @@ public class GlossaryActivity extends AppCompatActivity {
                     chineseInput.setText("");
                     vietnameseInput.setText("");
                     renderEntries();
+                    updateStorageStatus();
                 })
                 .show();
     }

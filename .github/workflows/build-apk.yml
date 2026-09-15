@@ -24,6 +24,44 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Khôi phục khóa ký cố định
+        shell: bash
+        env:
+          BBD_SIGNING_BUNDLE_BASE64: ${{ secrets.BBD_SIGNING_BUNDLE_BASE64 }}
+        run: |
+          set -euo pipefail
+
+          signing_dir="${RUNNER_TEMP}/bbd-signing"
+          bundle_path="${RUNNER_TEMP}/bbd-signing-bundle-v1.tar.gz"
+          mkdir -p "${signing_dir}"
+          chmod 700 "${signing_dir}"
+
+          if [ -z "${BBD_SIGNING_BUNDLE_BASE64}" ]; then
+            echo "Thiếu GitHub Secret BBD_SIGNING_BUNDLE_BASE64"
+            exit 1
+          fi
+
+          printf '%s' "${BBD_SIGNING_BUNDLE_BASE64}" \
+            | base64 --decode > "${bundle_path}"
+          tar -xzf "${bundle_path}" -C "${signing_dir}"
+
+          test -s "${signing_dir}/release.p12"
+          test -s "${signing_dir}/password.txt"
+          test -s "${signing_dir}/alias.txt"
+
+          signing_password="$(tr -d '\r\n' < "${signing_dir}/password.txt")"
+          signing_alias="$(tr -d '\r\n' < "${signing_dir}/alias.txt")"
+          echo "::add-mask::${signing_password}"
+
+          {
+            echo "BBD_SIGNING_STORE_FILE=${signing_dir}/release.p12"
+            echo "BBD_SIGNING_STORE_PASSWORD=${signing_password}"
+            echo "BBD_SIGNING_KEY_ALIAS=${signing_alias}"
+            echo "BBD_SIGNING_KEY_PASSWORD=${signing_password}"
+          } >> "${GITHUB_ENV}"
+
+          rm -f "${bundle_path}"
+
       - name: Cài Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -40,28 +78,42 @@ jobs:
       - name: Build APK release ARM64
         run: gradle --no-daemon --stacktrace assembleRelease
 
+      - name: Kiểm tra chữ ký APK
+        run: |
+          "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify \
+            --verbose \
+            --print-certs \
+            app/build/outputs/apk/release/app-release.apk \
+            | tee signing-report.txt
+
       - name: Đổi tên APK
-        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.9.1-arm64.apk
+        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.9.2-arm64.apk
 
       - name: Lưu APK trong Actions
         uses: actions/upload-artifact@v4
         with:
-          name: BongBongDich-v1.9.1-arm64
-          path: BongBongDich-v1.9.1-arm64.apk
+          name: BongBongDich-v1.9.2-arm64
+          path: |
+            BongBongDich-v1.9.2-arm64.apk
+            signing-report.txt
           if-no-files-found: error
           retention-days: 90
 
-      - name: Tạo bản phát hành v1.9.1
+      - name: Tạo bản phát hành v1.9.2
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.9.1
-          name: Bong Bóng Dịch v1.9.1
+          tag_name: v1.9.2
+          name: Bong Bóng Dịch v1.9.2
           body: |
-            Bản vá khẩn cấp sau phản hồi thực tế của người dùng.
+            Bản ổn định dữ liệu và cập nhật.
 
-            Gỡ toàn bộ cơ chế chèn thuật ngữ và tách câu thử nghiệm của v1.9.0.
-            Khôi phục nguyên bộ dịch ổn định của v1.8.0.
-            Giữ giao diện mới, ảnh dịch toàn màn hình và Từ điển chuyên ngành người dùng tự dạy.
-          files: BongBongDich-v1.9.1-arm64.apk
+            - Giữ nguyên bộ dịch của v1.9.1, không dùng lại thử nghiệm dịch v1.9.0.
+            - Từ điển chuyên ngành có thể tự đồng bộ ra Tài liệu/BongBongDich/tu-dien.json.
+            - Có tệp dự phòng tu-dien-backup.json và tự nhập lại khi kết nối thư mục cũ.
+            - Dùng chữ ký cố định để các phiên bản sau có thể cài đè mà không mất dữ liệu.
+            - Giữ bong bóng hủy dịch màu cam ở trên lớp ảnh dịch để luôn bấm hủy được.
+
+            Do các bản cũ dùng chữ ký tạm thời, cần gỡ bản cũ đúng một lần trước khi cài v1.9.2.
+          files: BongBongDich-v1.9.2-arm64.apk
           make_latest: true
           overwrite_files: true

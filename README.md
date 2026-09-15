@@ -2,7 +2,18 @@
 
 Ứng dụng Android nhận chữ Trung trong game và phủ bản dịch tiếng Việt ngay tại vị trí tương ứng.
 
-## Phiên bản 1.9.1
+## Phiên bản 1.9.2
+
+- Giữ nguyên bộ dịch ổn định của v1.9.1; không đưa lại thử nghiệm dịch v1.9.0.
+- Có thể kết nối thư mục Tài liệu để tự tạo `BongBongDich/tu-dien.json`.
+- Mỗi lần thêm, sửa hoặc xóa thuật ngữ, tệp từ điển bên ngoài được cập nhật tự động.
+- Có thêm `tu-dien-backup.json` giữ trạng thái trước đó nếu người dùng xóa nhầm.
+- Sau khi cài lại, chọn lại thư mục cũ để nhập toàn bộ thuật ngữ vào app.
+- Bắt đầu dùng một khóa ký cố định để các bản sau cài đè như bản cập nhật.
+- Sửa bong bóng hủy dịch bị lớp ảnh toàn màn hình che mất.
+- Do các bản trước dùng khóa ký tạm thời, v1.9.2 vẫn cần gỡ bản cũ đúng một lần.
+
+## Nền tảng ổn định từ v1.9.1
 
 - Khôi phục nguyên bộ dịch ổn định của v1.8.0 sau khi thử nghiệm v1.9.0 cho kết quả kém hơn.
 - Gỡ cơ chế tự chèn quá nhiều thuật ngữ vào câu Trung và tách riêng câu dài.

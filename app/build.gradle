@@ -6,15 +6,29 @@ android {
     namespace "com.ninh.bongbongdich"
     compileSdk 35
 
+    def stableSigningFilePath = System.getenv("BBD_SIGNING_STORE_FILE")
+
     defaultConfig {
         applicationId "com.ninh.bongbongdich"
         minSdk 26
         targetSdk 35
-        versionCode 13
-        versionName "1.9.1"
+        versionCode 14
+        versionName "1.9.2"
 
         ndk {
             abiFilters "arm64-v8a"
+        }
+    }
+
+    signingConfigs {
+        stableRelease {
+            if (stableSigningFilePath) {
+                storeFile file(stableSigningFilePath)
+                storePassword System.getenv("BBD_SIGNING_STORE_PASSWORD")
+                keyAlias System.getenv("BBD_SIGNING_KEY_ALIAS")
+                keyPassword System.getenv("BBD_SIGNING_KEY_PASSWORD")
+                storeType "PKCS12"
+            }
         }
     }
 
@@ -22,7 +36,15 @@ android {
         release {
             minifyEnabled true
             shrinkResources true
-            signingConfig signingConfigs.debug
+            if (stableSigningFilePath) {
+                signingConfig signingConfigs.stableRelease
+            } else if (System.getenv("CI") == "true") {
+                throw new GradleException(
+                        "Thiếu khóa ký ổn định: từ chối tạo APK release trong CI"
+                )
+            } else {
+                signingConfig signingConfigs.debug
+            }
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }

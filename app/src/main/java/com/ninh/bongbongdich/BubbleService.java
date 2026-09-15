@@ -1924,9 +1924,32 @@ public class BubbleService extends Service {
     }
 
     private void showBubble() {
-        if (bubbleView != null) {
-            updateBubbleVisual();
-            bubbleView.setVisibility(View.VISIBLE);
+        if (bubbleView == null || bubbleParams == null || cleaningUp) {
+            return;
+        }
+
+        updateBubbleVisual();
+        bubbleView.setVisibility(View.VISIBLE);
+        bringBubbleWindowToFront();
+    }
+
+    private void bringBubbleWindowToFront() {
+        try {
+            if (bubbleView.isAttachedToWindow()) {
+                windowManager.removeViewImmediate(bubbleView);
+            }
+            windowManager.addView(bubbleView, bubbleParams);
+        } catch (Exception ignored) {
+            // Nếu lớp phủ đang đổi kích thước, thử gắn lại mà không làm dừng app.
+            try {
+                if (!bubbleView.isAttachedToWindow()) {
+                    windowManager.addView(bubbleView, bubbleParams);
+                } else {
+                    windowManager.updateViewLayout(bubbleView, bubbleParams);
+                }
+            } catch (Exception ignoredAgain) {
+                // Dịch vụ có thể đang dừng.
+            }
         }
     }
 

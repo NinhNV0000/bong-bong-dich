@@ -29,7 +29,22 @@
     <string name="glossary_empty">Chưa có thuật ngữ riêng.&#10;Hãy dạy app từ đầu tiên ở phía trên.</string>
     <string name="glossary_tip">Chạm vào một thuật ngữ để sửa; bấm Xóa để bỏ riêng từ đó.</string>
 
+    <string name="storage_card_title">Lưu từ điển không bị mất</string>
+    <string name="storage_not_connected_status">Chưa chọn nơi lưu. Thuật ngữ mới vẫn nằm trong app và sẽ mất nếu gỡ cài đặt.</string>
+    <string name="storage_connected_status">Đã tự động đồng bộ tại %1$s</string>
+    <string name="storage_sync_failed_status">Không ghi được tệp sao lưu. Hãy kết nối lại thư mục.</string>
+    <string name="choose_storage_folder">CHỌN THƯ MỤC LƯU</string>
+    <string name="change_storage_folder">ĐỔI THƯ MỤC LƯU</string>
+    <string name="reconnect_storage_folder">KẾT NỐI LẠI THƯ MỤC</string>
+    <string name="storage_connected_success">Đã tạo tệp từ điển an toàn. Từ mới sẽ được tự động lưu.</string>
+    <string name="storage_restored">Đã lấy lại %1$d thuật ngữ; hiện có tổng cộng %2$d thuật ngữ.</string>
+    <string name="storage_connect_failed">Không thể tạo tệp từ điển trong thư mục này. Hãy chọn thư mục Tài liệu.</string>
+    <string name="term_saved_but_backup_failed">Đã lưu từ trong app nhưng chưa ghi được tệp sao lưu. Hãy kết nối lại thư mục.</string>
+    <string name="storage_prompt_title">Giữ từ điển khi cài lại app?</string>
+    <string name="storage_prompt_message">Chọn thư mục Tài liệu một lần. App sẽ tạo BongBongDich/tu-dien.json và tự lưu mọi thuật ngữ vào đó.</string>
+    <string name="storage_prompt_later">Để sau</string>
+    <string name="storage_prompt_choose">Chọn thư mục</string>
+
     <string name="privacy_note">Ảnh màn hình được OCR trong điện thoại và không lưu lại. Chỉ phần chữ nhận được được gửi tới bộ dịch online.</string>
     <string name="drag_hint">↓  Kéo bong bóng xuống vùng × để tắt nhanh</string>
 </resources>
-
