@@ -9,9 +9,9 @@
 - Mỗi lần thêm, sửa hoặc xóa thuật ngữ, tệp từ điển bên ngoài được cập nhật tự động.
 - Có thêm `tu-dien-backup.json` giữ trạng thái trước đó nếu người dùng xóa nhầm.
 - Sau khi cài lại, chọn lại thư mục cũ để nhập toàn bộ thuật ngữ vào app.
-- Bắt đầu dùng một khóa ký cố định để các bản sau cài đè như bản cập nhật.
 - Sửa bong bóng hủy dịch bị lớp ảnh toàn màn hình che mất.
-- Do các bản trước dùng khóa ký tạm thời, v1.9.2 vẫn cần gỡ bản cũ đúng một lần.
+- Bản vẫn dùng chữ ký build tạm như các bản trước.
+- Khi phải gỡ/cài lại, chọn thư mục từ điển cũ để khôi phục toàn bộ thuật ngữ.
 
 ## Nền tảng ổn định từ v1.9.1
 
