@@ -64,6 +64,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -126,6 +127,7 @@ public class BubbleService extends Service {
     private ExecutorService onlineTranslationExecutor;
     private final ConcurrentHashMap<String, String> translationCache =
             new ConcurrentHashMap<>();
+    private volatile Map<String, String> customGlossary = new LinkedHashMap<>();
 
     private TextRecognizer textRecognizer;
     private volatile boolean captureNextFrame;
@@ -148,6 +150,7 @@ public class BubbleService extends Service {
         captureThread.start();
         captureHandler = new Handler(captureThread.getLooper());
         onlineTranslationExecutor = Executors.newFixedThreadPool(4);
+        refreshCustomGlossary();
 
         textRecognizer = TextRecognition.getClient(
                 new ChineseTextRecognizerOptions.Builder().build()
@@ -469,10 +472,74 @@ public class BubbleService extends Service {
     }
 
     private void translateRegions(List<OcrRegion> regions, Bitmap capturedScreen) {
+        refreshCustomGlossary();
         clearTranslations();
         showFrozenScreen(capturedScreen);
         prepareSourceBounds(regions);
         performRegionTranslations(regions);
+    }
+
+    private void refreshCustomGlossary() {
+        Map<String, String> latest = GlossaryStore.load(this);
+        if (!latest.equals(customGlossary)) {
+            customGlossary = latest;
+            translationCache.clear();
+        }
+    }
+
+    private String exactCustomTranslation(String source) {
+        if (TextUtils.isEmpty(source) || customGlossary.isEmpty()) {
+            return null;
+        }
+
+        String direct = customGlossary.get(source.trim());
+        if (!TextUtils.isEmpty(direct)) {
+            return direct;
+        }
+
+        String normalizedSource = normalizeGlossaryKey(source);
+        for (Map.Entry<String, String> entry : customGlossary.entrySet()) {
+            if (normalizedSource.equals(normalizeGlossaryKey(entry.getKey()))) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    private String applyCustomGlossaryToSource(String source) {
+        if (TextUtils.isEmpty(source) || customGlossary.isEmpty()) {
+            return source;
+        }
+
+        String prepared = source;
+        for (Map.Entry<String, String> entry : customGlossary.entrySet()) {
+            String chinese = entry.getKey();
+            if (!TextUtils.isEmpty(chinese) && prepared.contains(chinese)) {
+                prepared = prepared.replace(
+                        chinese,
+                        "「" + entry.getValue() + "」"
+                );
+            }
+        }
+        return prepared;
+    }
+
+    private boolean sourceUsesCustomGlossary(String source) {
+        if (TextUtils.isEmpty(source) || customGlossary.isEmpty()) {
+            return false;
+        }
+        for (String chinese : customGlossary.keySet()) {
+            if (!TextUtils.isEmpty(chinese) && source.contains(chinese)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String normalizeGlossaryKey(String value) {
+        return value == null
+                ? ""
+                : value.replaceAll("[\\[\\]【】（）()\\s:：，,。.!！?？]", "");
     }
 
     private void prepareSourceBounds(List<OcrRegion> regions) {
@@ -588,6 +655,12 @@ public class BubbleService extends Service {
                     ? region.source.substring(0, 900)
                     : region.source;
 
+            String customTerm = exactCustomTranslation(source);
+            if (!TextUtils.isEmpty(customTerm)) {
+                results.add(new RegionTranslation(region, customTerm));
+                continue;
+            }
+
             String fixedTerm = exactGameTranslation(source);
             if (!TextUtils.isEmpty(fixedTerm)) {
                 results.add(new RegionTranslation(region, fixedTerm));
@@ -609,7 +682,7 @@ public class BubbleService extends Service {
             batchRequest
                     .append(batchMarker(markerIndex))
                     .append('\n')
-                    .append(source)
+                    .append(applyCustomGlossaryToSource(source))
                     .append('\n');
         }
 
@@ -725,17 +798,23 @@ public class BubbleService extends Service {
                 ? region.source.substring(0, 900)
                 : region.source;
 
+        String customTerm = exactCustomTranslation(source);
+        if (!TextUtils.isEmpty(customTerm)) {
+            return new RegionTranslation(region, customTerm);
+        }
+
         String fixedTerm = exactGameTranslation(source);
         if (fixedTerm != null) {
             return new RegionTranslation(region, fixedTerm);
         }
 
         try {
-            String translated = translateOnline(source);
-            return new RegionTranslation(
-                    region,
-                    compactTranslation(source, translated)
+            String translated = translateOnline(
+                    applyCustomGlossaryToSource(source)
             );
+            String compact = compactTranslation(source, translated);
+            cacheTranslation(source, compact);
+            return new RegionTranslation(region, compact);
         } catch (Exception ignored) {
             return new RegionTranslation(region, null);
         }
@@ -769,7 +848,7 @@ public class BubbleService extends Service {
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty(
                     "User-Agent",
-                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.7"
+                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.8"
             );
             connection.setFixedLengthStreamingMode(body.length);
 
@@ -1024,6 +1103,11 @@ public class BubbleService extends Service {
     }
 
     private String compactTranslation(String source, String translated) {
+        String customExact = exactCustomTranslation(source);
+        if (!TextUtils.isEmpty(customExact)) {
+            return customExact;
+        }
+
         String exact = exactGameTranslation(source);
         if (exact != null) {
             return exact;
@@ -1032,6 +1116,13 @@ public class BubbleService extends Service {
         String result = translated.trim()
                 .replaceAll("^\\s*\\[", "")
                 .replaceAll("\\]\\s*$", "");
+
+        if (sourceUsesCustomGlossary(source)) {
+            return result
+                    .replace("「", "")
+                    .replace("」", "")
+                    .trim();
+        }
 
         if (source.contains("装备")) {
             result = result.replaceAll(

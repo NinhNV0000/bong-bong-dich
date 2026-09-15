@@ -12,7 +12,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
-import android.widget.Button;
+import android.view.View;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -24,7 +24,7 @@ import androidx.core.content.ContextCompat;
 public class MainActivity extends AppCompatActivity {
 
     private TextView statusText;
-    private Button stopButton;
+    private View stopButton;
     private MediaProjectionManager projectionManager;
     private boolean requestingOverlayPermission;
 
@@ -38,7 +38,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         statusText = findViewById(R.id.status_text);
-        Button startButton = findViewById(R.id.button_start);
+        View startButton = findViewById(R.id.button_start);
         stopButton = findViewById(R.id.button_stop);
         projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
 
@@ -46,6 +46,19 @@ public class MainActivity extends AppCompatActivity {
 
         startButton.setOnClickListener(view -> beginStartFlow());
         stopButton.setOnClickListener(view -> stopBubbleService());
+        findViewById(R.id.button_glossary).setOnClickListener(
+                view -> openGlossary()
+        );
+        findViewById(R.id.button_glossary_top).setOnClickListener(
+                view -> openGlossary()
+        );
+        findViewById(R.id.button_info).setOnClickListener(view ->
+                Toast.makeText(
+                        this,
+                        "Ảnh được xử lý trên máy; chỉ chữ nhận dạng được gửi đi dịch.",
+                        Toast.LENGTH_LONG
+                ).show()
+        );
 
         updateStatus();
     }
@@ -134,7 +147,7 @@ public class MainActivity extends AppCompatActivity {
         ContextCompat.startForegroundService(this, serviceIntent);
 
         setStatus("Đang bật bong bóng dịch…");
-        stopButton.setEnabled(true);
+        setStopEnabled(true);
 
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             updateStatus();
@@ -151,7 +164,7 @@ public class MainActivity extends AppCompatActivity {
                 .putBoolean(BubbleService.KEY_RUNNING, false)
                 .apply();
         setStatus("Đã tắt bong bóng dịch.");
-        stopButton.setEnabled(false);
+        setStopEnabled(false);
     }
 
     private void updateStatus() {
@@ -159,15 +172,27 @@ public class MainActivity extends AppCompatActivity {
                 .getBoolean(BubbleService.KEY_RUNNING, false);
         if (running) {
             setStatus("● Bong bóng dịch đang hoạt động");
-            stopButton.setEnabled(true);
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.success));
+            setStopEnabled(true);
         } else if (!requestingOverlayPermission) {
             setStatus(getString(R.string.status_off));
-            stopButton.setEnabled(false);
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
+            setStopEnabled(false);
         }
     }
 
     private void setStatus(String message) {
         statusText.setText(message);
+        statusText.setTextColor(ContextCompat.getColor(this, R.color.primary));
+    }
+
+    private void setStopEnabled(boolean enabled) {
+        stopButton.setEnabled(enabled);
+        stopButton.setAlpha(enabled ? 1f : 0.42f);
+    }
+
+    private void openGlossary() {
+        startActivity(new Intent(this, GlossaryActivity.class));
     }
 
     @Override

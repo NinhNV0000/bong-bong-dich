@@ -2,8 +2,12 @@
 
 Ứng dụng Android nhận chữ Trung trong game và phủ bản dịch tiếng Việt ngay tại vị trí tương ứng.
 
-## Phiên bản 1.7.0
+## Phiên bản 1.8.0
 
+- Giao diện sáng xanh mới, gọn hơn và icon mới theo thiết kế của người dùng.
+- Thêm Từ điển chuyên ngành để tự dạy chữ Trung → cách dịch tiếng Việt.
+- Có thể thêm, sửa, xóa riêng từng thuật ngữ hoặc xóa toàn bộ; dữ liệu được lưu trên máy.
+- Thuật ngữ người dùng dạy luôn được ưu tiên trước Google và từ điển mặc định.
 - Thêm chế độ ảnh dịch toàn màn hình: giữ ảnh game, che chữ Trung và đặt chữ Việt tại chỗ.
 - Tự lấy màu nền xung quanh vùng chữ và chọn chữ sáng/tối để dễ đọc hơn.
 - Khóa thao tác xuống game trong lúc ảnh dịch đang mở; chạm × để quay lại game.

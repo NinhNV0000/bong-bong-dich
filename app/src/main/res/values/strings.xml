@@ -1,18 +1,35 @@
 <resources>
     <string name="app_name">Bong Bóng Dịch</string>
     <string name="app_title">Bong Bóng Dịch</string>
+    <string name="app_title_prefix">Bong Bóng&#160;</string>
+    <string name="app_title_highlight">Dịch</string>
+    <string name="app_subtitle_short">Dịch chữ Trung trực tiếp trên màn hình</string>
     <string name="app_subtitle">Chụp nhanh màn hình, thay chữ Trung bằng tiếng Việt rồi trở lại game</string>
-    <string name="online_badge">● ONLINE  •  TRUNG → VIỆT</string>
-    <string name="how_to_title">DỊCH TRỰC TIẾP</string>
-    <string name="how_to_steps">1  Bật bong bóng và chia sẻ toàn bộ màn hình
-2  Chạm 译 để tạo ảnh dịch toàn màn hình
-3  Đọc xong chạm × để trở lại game
-4  Kéo bong bóng xuống vùng đỏ để tắt hẳn</string>
-    <string name="speed_note">✦ Chữ Việt được đặt trực tiếp vào ảnh giống chế độ dịch màn hình</string>
-    <string name="privacy_note">Ảnh màn hình được OCR trong điện thoại và không lưu lại. Chỉ phần chữ nhận được được gửi tới bộ dịch online.</string>
-    <string name="status_off">Chưa bật bong bóng</string>
+
+    <string name="language_source">🇨🇳  Trung (简体)</string>
+    <string name="language_target">🇻🇳  Việt</string>
+    <string name="status_off">●  Chưa bật</string>
     <string name="button_start">Bật dịch trên màn hình</string>
-    <string name="button_stop">Tắt bong bóng</string>
+    <string name="button_start_short">BẬT BONG BÓNG</string>
+    <string name="button_stop">■  Tắt bong bóng</string>
+    <string name="made_for">—  Dành cho Ninh Nguyễn  —</string>
+    <string name="info">Thông tin ứng dụng</string>
+
+    <string name="glossary_title">Từ điển chuyên ngành</string>
+    <string name="glossary_subtitle">Dạy app cách dịch đúng ý của anh</string>
+    <string name="glossary_screen_title">Dạy app cách dịch</string>
+    <string name="glossary_intro">Nhập từ tiếng Trung và cách anh muốn dịch. App sẽ ưu tiên từ đã dạy trước Google.</string>
+    <string name="source_chinese">Chữ Trung gốc</string>
+    <string name="preferred_vietnamese">Cách dịch tiếng Việt</string>
+    <string name="chinese_hint">Ví dụ: 战力</string>
+    <string name="vietnamese_hint">Ví dụ: Lực chiến</string>
+    <string name="save_and_teach">GHI NHỚ CÁCH DỊCH</string>
+    <string name="no_terms_count">0 thuật ngữ đã dạy</string>
+    <string name="clear_all">Xóa tất cả</string>
+    <string name="glossary_empty">Chưa có thuật ngữ riêng.&#10;Hãy dạy app từ đầu tiên ở phía trên.</string>
+    <string name="glossary_tip">Chạm vào một thuật ngữ để sửa; bấm Xóa để bỏ riêng từ đó.</string>
+
+    <string name="privacy_note">Ảnh màn hình được OCR trong điện thoại và không lưu lại. Chỉ phần chữ nhận được được gửi tới bộ dịch online.</string>
     <string name="drag_hint">↓  Kéo bong bóng xuống vùng × để tắt nhanh</string>
-    <string name="made_for">Dành cho Ninh Nguyễn</string>
 </resources>
+
