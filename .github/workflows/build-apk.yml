@@ -49,33 +49,34 @@ jobs:
             | tee signing-report.txt
 
       - name: Đổi tên APK
-        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.9.2-arm64.apk
+        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.9.3-arm64.apk
 
       - name: Lưu APK trong Actions
         uses: actions/upload-artifact@v4
         with:
-          name: BongBongDich-v1.9.2-arm64
+          name: BongBongDich-v1.9.3-arm64
           path: |
-            BongBongDich-v1.9.2-arm64.apk
+            BongBongDich-v1.9.3-arm64.apk
             signing-report.txt
           if-no-files-found: error
           retention-days: 90
 
-      - name: Tạo bản phát hành v1.9.2
+      - name: Tạo bản phát hành v1.9.3
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.9.2
-          name: Bong Bóng Dịch v1.9.2
+          tag_name: v1.9.3
+          name: Bong Bóng Dịch v1.9.3
           body: |
             Bản ổn định dữ liệu và cập nhật.
 
             - Giữ nguyên bộ dịch của v1.9.1, không dùng lại thử nghiệm dịch v1.9.0.
             - Từ điển chuyên ngành có thể tự đồng bộ ra Tài liệu/BongBongDich/tu-dien.json.
             - Có tệp dự phòng tu-dien-backup.json và tự nhập lại khi kết nối thư mục cũ.
-            - Giữ bong bóng hủy dịch màu cam ở trên lớp ảnh dịch để luôn bấm hủy được.
+            - Nút hủy có thêm một lớp dự phòng ngay trong ảnh dịch nên không còn bị che mất.
+            - Lớp ảnh dịch nhận và chặn cử chỉ quay lại; vuốt Back sẽ đóng bản dịch thay vì thoát game.
 
             Bản này vẫn dùng chữ ký build tạm như các bản trước. Khi phải gỡ/cài lại,
             hãy chọn thư mục từ điển cũ để khôi phục các thuật ngữ đã dạy.
-          files: BongBongDich-v1.9.2-arm64.apk
+          files: BongBongDich-v1.9.3-arm64.apk
           make_latest: true
           overwrite_files: true

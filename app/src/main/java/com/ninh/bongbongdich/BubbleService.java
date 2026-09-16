@@ -30,6 +30,7 @@ import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
@@ -111,6 +112,7 @@ public class BubbleService extends Service {
     private WindowManager.LayoutParams translationLayerParams;
     private ImageView frozenScreenView;
     private TextView frozenScreenBar;
+    private TextView translationCancelButton;
     private Bitmap frozenScreenBitmap;
     private final List<Rect> placedTranslationBounds = new ArrayList<>();
     private final List<Rect> sourceTranslationBounds = new ArrayList<>();
@@ -936,9 +938,8 @@ public class BubbleService extends Service {
                 displayed++;
             }
         }
-        if (frozenScreenBar != null) {
-            frozenScreenBar.bringToFront();
-        }
+        raiseTranslationControls();
+        showBubble();
         return displayed;
     }
 
@@ -954,6 +955,8 @@ public class BubbleService extends Service {
         busy = false;
         updateBubbleVisual();
         updateFrozenScreenBar(displayedCount, failedCount);
+        raiseTranslationControls();
+        showBubble();
 
         if (displayedCount == 0) {
             showToast("Dịch thất bại. Chạm × để đóng rồi thử lại.");
@@ -1193,6 +1196,16 @@ public class BubbleService extends Service {
         translationLayer.setImportantForAccessibility(
                 View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         );
+        translationLayer.setFocusableInTouchMode(true);
+        translationLayer.setOnKeyListener((view, keyCode, event) -> {
+            if (keyCode != KeyEvent.KEYCODE_BACK) {
+                return false;
+            }
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                handleBubbleTap();
+            }
+            return true;
+        });
 
         translationLayerParams = new WindowManager.LayoutParams(
                 Math.max(1, screenWidth),
@@ -1228,12 +1241,25 @@ public class BubbleService extends Service {
         translationLayer.addView(frozenScreenView, imageParams);
 
         createFrozenScreenBar();
+        createTranslationCancelButton();
         translationsVisible = true;
         translationLayer.setVisibility(View.VISIBLE);
         translationLayer.setClickable(true);
         translationLayer.setOnTouchListener((view, event) -> true);
         setTranslationLayerTouchBlocking(true);
         updateBubbleVisual();
+        raiseTranslationControls();
+        showBubble();
+
+        int generation = captureSequence;
+        mainHandler.postDelayed(() -> {
+            if (!cleaningUp
+                    && generation == captureSequence
+                    && translationsVisible) {
+                showBubble();
+                raiseTranslationControls();
+            }
+        }, 180);
     }
 
     private void createFrozenScreenBar() {
@@ -1271,6 +1297,71 @@ public class BubbleService extends Service {
         translationLayer.addView(frozenScreenBar, barParams);
     }
 
+    private void createTranslationCancelButton() {
+        if (translationLayer == null || translationCancelButton != null) {
+            return;
+        }
+
+        translationCancelButton = new TextView(this);
+        translationCancelButton.setText("×");
+        translationCancelButton.setTextColor(Color.WHITE);
+        translationCancelButton.setTextSize(28);
+        translationCancelButton.setTypeface(Typeface.DEFAULT_BOLD);
+        translationCancelButton.setGravity(Gravity.CENTER);
+        translationCancelButton.setIncludeFontPadding(false);
+        translationCancelButton.setContentDescription("Chạm để hủy hoặc đóng bản dịch");
+        translationCancelButton.setElevation(dp(40));
+        translationCancelButton.setClickable(true);
+        translationCancelButton.setOnClickListener(view -> handleBubbleTap());
+
+        GradientDrawable background = new GradientDrawable();
+        background.setShape(GradientDrawable.OVAL);
+        background.setOrientation(GradientDrawable.Orientation.TL_BR);
+        background.setColors(new int[]{
+                Color.parseColor("#FB7185"),
+                Color.parseColor("#E11D48")
+        });
+        background.setStroke(dp(2), Color.parseColor("#D9FFFFFF"));
+        translationCancelButton.setBackground(background);
+
+        int buttonWidth = bubbleParams == null ? dp(62) : bubbleParams.width;
+        int buttonHeight = bubbleParams == null ? dp(62) : bubbleParams.height;
+        int[] layerLocation = new int[]{0, 0};
+        translationLayer.getLocationOnScreen(layerLocation);
+
+        int desiredX = bubbleParams == null
+                ? screenWidth - dp(78)
+                : bubbleParams.x;
+        int desiredY = bubbleParams == null
+                ? dp(180)
+                : bubbleParams.y;
+
+        FrameLayout.LayoutParams cancelParams = new FrameLayout.LayoutParams(
+                buttonWidth,
+                buttonHeight
+        );
+        cancelParams.leftMargin = clamp(
+                desiredX - layerLocation[0],
+                0,
+                Math.max(0, screenWidth - buttonWidth)
+        );
+        cancelParams.topMargin = clamp(
+                desiredY - layerLocation[1],
+                0,
+                Math.max(0, screenHeight - buttonHeight)
+        );
+        translationLayer.addView(translationCancelButton, cancelParams);
+    }
+
+    private void raiseTranslationControls() {
+        if (frozenScreenBar != null) {
+            frozenScreenBar.bringToFront();
+        }
+        if (translationCancelButton != null) {
+            translationCancelButton.bringToFront();
+        }
+    }
+
     private void updateFrozenScreenBar(int displayedCount, int failedCount) {
         if (frozenScreenBar == null) {
             return;
@@ -1296,13 +1387,24 @@ public class BubbleService extends Service {
         if (blocking) {
             translationLayerParams.flags &=
                     ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            translationLayerParams.flags &=
+                    ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            translationLayer.setFocusable(true);
+            translationLayer.setFocusableInTouchMode(true);
         } else {
             translationLayerParams.flags |=
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            translationLayerParams.flags |=
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            translationLayer.clearFocus();
+            translationLayer.setFocusable(false);
         }
 
         try {
             windowManager.updateViewLayout(translationLayer, translationLayerParams);
+            if (blocking) {
+                translationLayer.post(translationLayer::requestFocus);
+            }
         } catch (Exception ignored) {
             // Lớp phủ có thể đang được tạo lại hoặc dịch vụ đang dừng.
         }
@@ -1314,6 +1416,7 @@ public class BubbleService extends Service {
             frozenScreenView = null;
         }
         frozenScreenBar = null;
+        translationCancelButton = null;
 
         if (frozenScreenBitmap != null && !frozenScreenBitmap.isRecycled()) {
             frozenScreenBitmap.recycle();
@@ -1380,9 +1483,7 @@ public class BubbleService extends Service {
         labelParams.topMargin = displayBounds.top;
 
         translationLayer.addView(label, labelParams);
-        if (frozenScreenBar != null) {
-            frozenScreenBar.bringToFront();
-        }
+        raiseTranslationControls();
         placedTranslationBounds.add(new Rect(displayBounds));
         translationsVisible = true;
         translationLayer.setVisibility(View.VISIBLE);
