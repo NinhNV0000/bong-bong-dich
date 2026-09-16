@@ -2,16 +2,17 @@
 
 Ứng dụng Android nhận chữ Trung trong game và phủ bản dịch tiếng Việt ngay tại vị trí tương ứng.
 
-## Phiên bản 1.9.3
+## Phiên bản 1.10.0
 
-- Giữ nguyên bộ dịch ổn định và cách hiển thị của v1.9.2.
-- Thêm nút hủy dự phòng ngay trong lớp ảnh dịch để không bị lớp phủ che mất.
-- Đưa bong bóng thật lên trước sau mỗi lần lớp dịch cập nhật.
-- Lớp ảnh dịch nhận phím/cử chỉ quay lại: vuốt Back sẽ đóng bản dịch, không thoát game bên dưới.
-- Toàn bộ thao tác chạm và vuốt khi ảnh dịch đang mở được giữ trong lớp dịch.
-- Tiếp tục lưu từ điển tại `BongBongDich/tu-dien.json` và có tệp dự phòng.
+- Chuyển sang dịch riêng từng vùng OCR theo nhiều luồng; không còn ghép hàng loạt bằng mã đánh dấu dễ gây lệch nội dung giữa các ô.
+- Khóa từ điển người dùng và thuật ngữ game bằng mã tạm, sau đó phục hồi cách dịch mong muốn vào câu tiếng Việt.
+- Kiểm tra tự động kết quả đáng ngờ: còn nhiều chữ Trung, làm rơi số, lộ mã tạm hoặc độ dài bất thường.
+- Tự thử lại bằng câu gốc nếu bản có khóa thuật ngữ gặp lỗi.
+- Bổ sung cách dịch cố định cho thuật ngữ game và tên nhân vật Naruto thường gặp.
+- Giữ nguyên giao diện ảnh dịch, nút hủy dự phòng và cơ chế chặn Back của v1.9.3.
+- Có thể chậm hơn một chút ở màn hình nhiều chữ để ưu tiên dịch đúng hơn.
+- Tiếp tục lưu từ điển tại `BongBongDich/tu-dien.json`.
 - Bản vẫn dùng chữ ký build tạm như các bản trước.
-- Khi phải gỡ/cài lại, chọn thư mục từ điển cũ để khôi phục toàn bộ thuật ngữ.
 
 ## Nền tảng ổn định từ v1.9.1
 

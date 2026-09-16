@@ -89,6 +89,30 @@ public class BubbleService extends Service {
     private static final int MAX_REGIONS = 24;
     private static final int MAX_OCR_LONG_EDGE = 2200;
     private static final int MAX_BATCH_CHARACTERS = 2600;
+    private static final Pattern NUMBER_TOKEN_PATTERN = Pattern.compile(
+            "\\d+(?:[.,]\\d+)*%?"
+    );
+    private static final String[] PROTECTED_GAME_TERMS = new String[]{
+            "漩涡鸣人", "宇智波佐助", "春野樱", "旗木卡卡西",
+            "宇智波鼬", "宇智波带土", "宇智波斑", "日向雏田",
+            "鸣人仙人", "仙人鸣人", "九尾鸣人", "六道鸣人",
+            "轮回眼佐助", "排行榜", "战斗力", "竞技场",
+            "已领取", "未解锁", "已完成", "十连抽",
+            "通灵兽", "查克拉", "活动", "公告", "领取",
+            "充值", "首充", "购买", "返回", "确定", "确认",
+            "取消", "开启", "继续", "跳过", "前往", "免费",
+            "角色", "背包", "装备", "任务", "主线", "支线",
+            "商城", "商店", "挑战", "副本", "关卡", "战力",
+            "等级", "升级", "进阶", "突破", "升星", "阵容",
+            "招募", "召唤", "技能", "天赋", "奖励", "邮件",
+            "好友", "公会", "帮会", "排行", "设置", "兑换",
+            "签到", "限时", "扫荡", "挂机", "体力", "元宝",
+            "金币", "战斗", "单抽", "攻击", "防御", "生命",
+            "暴击", "命中", "闪避", "碎片", "羁绊", "阵营",
+            "鸣人", "佐助", "小樱", "卡卡西", "纲手", "自来也",
+            "大蛇丸", "我爱罗", "雏田", "带土", "六道", "火影",
+            "忍者", "忍术", "尾兽", "忍界"
+    };
     private static final Pattern BATCH_MARKER_PATTERN = Pattern.compile(
             "\\[\\s*\\[\\s*\\[\\s*BBD\\s*[_-]?\\s*(\\d+)"
                     + "\\s*\\]\\s*\\]\\s*\\]",
@@ -151,7 +175,7 @@ public class BubbleService extends Service {
         captureThread = new HandlerThread("screen-capture");
         captureThread.start();
         captureHandler = new Handler(captureThread.getLooper());
-        onlineTranslationExecutor = Executors.newFixedThreadPool(4);
+        onlineTranslationExecutor = Executors.newFixedThreadPool(5);
         refreshCustomGlossary();
 
         textRecognizer = TextRecognition.getClient(
@@ -470,6 +494,7 @@ public class BubbleService extends Service {
         }
         return text.trim()
                 .replaceAll("[\\t ]+", " ")
+                .replaceAll("(?<=\\p{IsHan})[\\t ]+(?=\\p{IsHan})", "")
                 .replaceAll("\\n{3,}", "\n\n");
     }
 
@@ -561,16 +586,15 @@ public class BubbleService extends Service {
             return;
         }
 
-        showToast("Đang dịch nhanh toàn màn hình…");
+        showToast("Đang dịch kỹ từng vùng chữ…");
 
         int generation = captureSequence;
-        List<List<OcrRegion>> batches = buildRegionBatches(regions);
-        List<CompletableFuture<List<RegionTranslation>>> futures = new ArrayList<>();
+        List<CompletableFuture<RegionTranslation>> futures = new ArrayList<>();
 
-        for (List<OcrRegion> batch : batches) {
-            CompletableFuture<List<RegionTranslation>> future =
+        for (OcrRegion region : regions) {
+            CompletableFuture<RegionTranslation> future =
                     CompletableFuture.supplyAsync(
-                            () -> translateBatchOnline(batch, generation),
+                            () -> translateRegionOnline(region, generation),
                             onlineTranslationExecutor
                     );
             futures.add(future);
@@ -581,16 +605,16 @@ public class BubbleService extends Service {
                 .whenComplete((unused, error) -> {
                     List<RegionTranslation> onlineResults = new ArrayList<>();
 
-                    for (CompletableFuture<List<RegionTranslation>> future : futures) {
-                        List<RegionTranslation> results = null;
+                    for (CompletableFuture<RegionTranslation> future : futures) {
+                        RegionTranslation result = null;
                         try {
-                            results = future.getNow(null);
+                            result = future.getNow(null);
                         } catch (Exception ignored) {
-                            // Các lô còn lại vẫn được hiển thị bình thường.
+                            // Ô khác vẫn được hiển thị nếu một yêu cầu bị lỗi.
                         }
 
-                        if (results != null) {
-                            onlineResults.addAll(results);
+                        if (result != null && !TextUtils.isEmpty(result.translated)) {
+                            onlineResults.add(result);
                         }
                     }
 
@@ -788,6 +812,146 @@ public class BubbleService extends Service {
         translationCache.put(source, translated);
     }
 
+    private PreparedSource prepareSourceForTranslation(String source) {
+        List<GlossaryTerm> glossaryTerms = new ArrayList<>();
+
+        for (Map.Entry<String, String> entry : customGlossary.entrySet()) {
+            if (!TextUtils.isEmpty(entry.getKey())
+                    && !TextUtils.isEmpty(entry.getValue())) {
+                glossaryTerms.add(new GlossaryTerm(
+                        entry.getKey().trim(),
+                        entry.getValue().trim(),
+                        true
+                ));
+            }
+        }
+
+        for (String chinese : PROTECTED_GAME_TERMS) {
+            String vietnamese = exactGameTranslation(chinese);
+            if (!TextUtils.isEmpty(vietnamese)) {
+                glossaryTerms.add(new GlossaryTerm(
+                        chinese,
+                        vietnamese,
+                        false
+                ));
+            }
+        }
+
+        glossaryTerms.sort((first, second) -> {
+            if (first.custom != second.custom) {
+                return first.custom ? -1 : 1;
+            }
+            return Integer.compare(
+                    second.chinese.length(),
+                    first.chinese.length()
+            );
+        });
+
+        String prepared = source;
+        List<String> replacements = new ArrayList<>();
+
+        for (GlossaryTerm term : glossaryTerms) {
+            if (!prepared.contains(term.chinese)) {
+                continue;
+            }
+
+            int tokenIndex = replacements.size();
+            String token = "BBDTERM" + tokenIndex + "X";
+            prepared = prepared.replace(term.chinese, " " + token + " ");
+            replacements.add(term.vietnamese);
+        }
+
+        prepared = prepared
+                .replaceAll("[\\t ]+", " ")
+                .replaceAll(" ?\\n ?", "\n")
+                .trim();
+        return new PreparedSource(prepared, replacements);
+    }
+
+    private String restoreProtectedTerms(
+            String translated,
+            PreparedSource preparedSource
+    ) {
+        String restored = translated == null ? "" : translated;
+
+        for (int index = 0; index < preparedSource.replacements.size(); index++) {
+            String pattern = "(?i)BBD\\s*TERM\\s*"
+                    + index
+                    + "\\s*X";
+            restored = restored.replaceAll(
+                    pattern,
+                    Matcher.quoteReplacement(
+                            preparedSource.replacements.get(index)
+                    )
+            );
+        }
+
+        return restored
+                .replaceAll("\\s+([,.;:!?])", "$1")
+                .replaceAll("[\\t ]{2,}", " ")
+                .trim();
+    }
+
+    private int translationQualityScore(String source, String translated) {
+        if (TextUtils.isEmpty(translated)) {
+            return -1000;
+        }
+
+        int score = 100;
+        String normalizedSource = normalizeGlossaryKey(source);
+        String normalizedTranslation = normalizeGlossaryKey(translated);
+
+        if (!normalizedSource.isEmpty()
+                && normalizedSource.equalsIgnoreCase(normalizedTranslation)) {
+            score -= 90;
+        }
+
+        int remainingChinese = 0;
+        for (int index = 0; index < translated.length(); index++) {
+            char character = translated.charAt(index);
+            if ((character >= '\u3400' && character <= '\u4DBF')
+                    || (character >= '\u4E00' && character <= '\u9FFF')
+                    || (character >= '\uF900' && character <= '\uFAFF')) {
+                remainingChinese++;
+            }
+        }
+        score -= Math.min(80, remainingChinese * 12);
+
+        if (translated.toUpperCase().contains("BBDTERM")
+                || translated.toUpperCase().contains("BBD_")) {
+            score -= 100;
+        }
+
+        int sourceLength = Math.max(1, normalizedSource.length());
+        int translatedLength = normalizedTranslation.length();
+        if (translatedLength > sourceLength * 7 + 45) {
+            score -= 35;
+        }
+        if (sourceLength >= 5 && translatedLength <= 1) {
+            score -= 45;
+        }
+
+        Matcher numberMatcher = NUMBER_TOKEN_PATTERN.matcher(source);
+        while (numberMatcher.find()) {
+            if (!translated.contains(numberMatcher.group())) {
+                score -= 18;
+            }
+        }
+
+        return score;
+    }
+
+    private String translateOnlineWithRetry(String source) throws Exception {
+        try {
+            return translateOnline(source);
+        } catch (Exception firstError) {
+            if (cleaningUp) {
+                throw firstError;
+            }
+            return translateOnline(source);
+        }
+    }
+
     private RegionTranslation translateRegionOnline(
             OcrRegion region,
             int generation
@@ -806,20 +970,59 @@ public class BubbleService extends Service {
         }
 
         String fixedTerm = exactGameTranslation(source);
-        if (fixedTerm != null) {
+        if (!TextUtils.isEmpty(fixedTerm)) {
             return new RegionTranslation(region, fixedTerm);
         }
 
-        try {
-            String translated = translateOnline(
-                    applyCustomGlossaryToSource(source)
+        String cached = translationCache.get(source);
+        if (!TextUtils.isEmpty(cached)) {
+            return new RegionTranslation(
+                    region,
+                    compactTranslation(source, cached)
             );
-            String compact = compactTranslation(source, translated);
-            cacheTranslation(source, compact);
-            return new RegionTranslation(region, compact);
+        }
+
+        PreparedSource preparedSource = prepareSourceForTranslation(source);
+        String bestTranslation = null;
+        int bestScore = -1000;
+
+        try {
+            String translated = translateOnlineWithRetry(preparedSource.text);
+            String restored = restoreProtectedTerms(
+                    translated,
+                    preparedSource
+            );
+            String candidate = compactTranslation(source, restored);
+            bestTranslation = candidate;
+            bestScore = translationQualityScore(source, candidate);
         } catch (Exception ignored) {
+            // Thử lại bằng câu gốc ở dưới nếu bản có khóa thuật ngữ bị lỗi.
+        }
+
+        if (!preparedSource.text.equals(source) && bestScore < 70) {
+            try {
+                String rawCandidate = compactTranslation(
+                        source,
+                        translateOnlineWithRetry(source)
+                );
+                int rawScore = translationQualityScore(source, rawCandidate);
+                if (rawScore > bestScore) {
+                    bestTranslation = rawCandidate;
+                    bestScore = rawScore;
+                }
+            } catch (Exception ignored) {
+                // Giữ ứng viên có khóa thuật ngữ nếu yêu cầu dự phòng thất bại.
+            }
+        }
+
+        if (cleaningUp || generation != captureSequence
+                || TextUtils.isEmpty(bestTranslation)
+                || bestScore < 15) {
             return new RegionTranslation(region, null);
         }
+
+        cacheTranslation(source, bestTranslation);
+        return new RegionTranslation(region, bestTranslation);
     }
 
     private String translateOnline(String source) throws Exception {
@@ -850,7 +1053,7 @@ public class BubbleService extends Service {
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty(
                     "User-Agent",
-                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.8"
+                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.10"
             );
             connection.setFixedLengthStreamingMode(body.length);
 
@@ -1100,6 +1303,72 @@ public class BubbleService extends Service {
                 return "Chính xác";
             case "闪避":
                 return "Né tránh";
+            case "碎片":
+                return "Mảnh";
+            case "羁绊":
+                return "Duyên";
+            case "阵营":
+                return "Phe";
+            case "漩涡鸣人":
+                return "Naruto Uzumaki";
+            case "鸣人":
+                return "Naruto";
+            case "鸣人仙人":
+            case "仙人鸣人":
+                return "Naruto Tiên Nhân";
+            case "九尾鸣人":
+                return "Naruto Cửu Vĩ";
+            case "六道鸣人":
+                return "Naruto Lục Đạo";
+            case "宇智波佐助":
+                return "Sasuke Uchiha";
+            case "佐助":
+                return "Sasuke";
+            case "轮回眼佐助":
+                return "Sasuke Luân Hồi Nhãn";
+            case "春野樱":
+                return "Sakura Haruno";
+            case "小樱":
+                return "Sakura";
+            case "旗木卡卡西":
+            case "卡卡西":
+                return "Kakashi";
+            case "宇智波鼬":
+            case "鼬":
+                return "Itachi";
+            case "宇智波带土":
+            case "带土":
+                return "Obito";
+            case "宇智波斑":
+            case "斑":
+                return "Madara";
+            case "日向雏田":
+            case "雏田":
+                return "Hinata";
+            case "纲手":
+                return "Tsunade";
+            case "自来也":
+                return "Jiraiya";
+            case "大蛇丸":
+                return "Orochimaru";
+            case "我爱罗":
+                return "Gaara";
+            case "六道":
+                return "Lục Đạo";
+            case "火影":
+                return "Hokage";
+            case "忍者":
+                return "Ninja";
+            case "忍术":
+                return "Nhẫn thuật";
+            case "尾兽":
+                return "Vĩ thú";
+            case "通灵兽":
+                return "Thông linh thú";
+            case "查克拉":
+                return "Chakra";
+            case "忍界":
+                return "Nhẫn giới";
             default:
                 return null;
         }
@@ -2415,6 +2684,32 @@ public class BubbleService extends Service {
 
         stopForeground(STOP_FOREGROUND_REMOVE);
         super.onDestroy();
+    }
+
+    private static final class GlossaryTerm {
+        final String chinese;
+        final String vietnamese;
+        final boolean custom;
+
+        GlossaryTerm(
+                String chinese,
+                String vietnamese,
+                boolean custom
+        ) {
+            this.chinese = chinese;
+            this.vietnamese = vietnamese;
+            this.custom = custom;
+        }
+    }
+
+    private static final class PreparedSource {
+        final String text;
+        final List<String> replacements;
+
+        PreparedSource(String text, List<String> replacements) {
+            this.text = text;
+            this.replacements = replacements;
+        }
     }
 
     private static final class RegionTranslation {
