@@ -2,8 +2,9 @@
 
 Ứng dụng Android nhận chữ Trung trong game và phủ bản dịch tiếng Việt ngay tại vị trí tương ứng.
 
-## Phiên bản 1.10.0
+## Phiên bản 1.10.1
 
+- Nối các dòng OCR trong cùng một khối thành câu hoàn chỉnh trước khi gửi dịch; dấu câu thật vẫn được giữ nguyên.
 - Chuyển sang dịch riêng từng vùng OCR theo nhiều luồng; không còn ghép hàng loạt bằng mã đánh dấu dễ gây lệch nội dung giữa các ô.
 - Khóa từ điển người dùng và thuật ngữ game bằng mã tạm, sau đó phục hồi cách dịch mong muốn vào câu tiếng Việt.
 - Kiểm tra tự động kết quả đáng ngờ: còn nhiều chữ Trung, làm rơi số, lộ mã tạm hoặc độ dài bất thường.

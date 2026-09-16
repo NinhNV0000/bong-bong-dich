@@ -492,10 +492,62 @@ public class BubbleService extends Service {
         if (text == null) {
             return "";
         }
-        return text.trim()
+
+        String normalized = text.trim()
+                .replace("\r\n", "\n")
+                .replace('\r', '\n')
                 .replaceAll("[\\t ]+", " ")
                 .replaceAll("(?<=\\p{IsHan})[\\t ]+(?=\\p{IsHan})", "")
+                .replaceAll("[\\t ]*\\n[\\t ]*", "\n")
                 .replaceAll("\\n{3,}", "\n\n");
+
+        return joinSoftOcrLineBreaks(normalized);
+    }
+
+    private String joinSoftOcrLineBreaks(String text) {
+        String[] paragraphs = text.split("\\n\\s*\\n", -1);
+        StringBuilder joinedText = new StringBuilder();
+
+        for (String paragraph : paragraphs) {
+            String[] lines = paragraph.split("\\n");
+            StringBuilder joinedParagraph = new StringBuilder();
+
+            for (String rawLine : lines) {
+                String line = rawLine.trim();
+                if (line.isEmpty()) {
+                    continue;
+                }
+
+                if (joinedParagraph.length() > 0) {
+                    char previous = joinedParagraph.charAt(
+                            joinedParagraph.length() - 1
+                    );
+                    char next = line.charAt(0);
+
+                    // Chỉ thêm khoảng trắng khi một từ Latin/số bị ngắt dòng.
+                    // Chữ Trung xuống dòng là ngắt hiển thị, không phải câu mới.
+                    if (isAsciiWordCharacter(previous)
+                            && isAsciiWordCharacter(next)) {
+                        joinedParagraph.append(' ');
+                    }
+                }
+                joinedParagraph.append(line);
+            }
+
+            if (joinedParagraph.length() == 0) {
+                continue;
+            }
+            if (joinedText.length() > 0) {
+                joinedText.append('\n');
+            }
+            joinedText.append(joinedParagraph);
+        }
+
+        return joinedText.toString().trim();
+    }
+
+    private boolean isAsciiWordCharacter(char character) {
+        return character <= 127 && Character.isLetterOrDigit(character);
     }
 
     private void translateRegions(List<OcrRegion> regions, Bitmap capturedScreen) {
@@ -1053,7 +1105,7 @@ public class BubbleService extends Service {
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty(
                     "User-Agent",
-                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.10"
+                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.10.1"
             );
             connection.setFixedLengthStreamingMode(body.length);
 
