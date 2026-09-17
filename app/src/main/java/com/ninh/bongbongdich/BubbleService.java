@@ -136,7 +136,6 @@ public class BubbleService extends Service {
     private WindowManager.LayoutParams translationLayerParams;
     private ImageView frozenScreenView;
     private TextView frozenScreenBar;
-    private TextView translationCancelButton;
     private Bitmap frozenScreenBitmap;
     private final List<Rect> placedTranslationBounds = new ArrayList<>();
     private final List<Rect> sourceTranslationBounds = new ArrayList<>();
@@ -175,7 +174,7 @@ public class BubbleService extends Service {
         captureThread = new HandlerThread("screen-capture");
         captureThread.start();
         captureHandler = new Handler(captureThread.getLooper());
-        onlineTranslationExecutor = Executors.newFixedThreadPool(5);
+        onlineTranslationExecutor = Executors.newFixedThreadPool(8);
         refreshCustomGlossary();
 
         textRecognizer = TextRecognition.getClient(
@@ -638,55 +637,72 @@ public class BubbleService extends Service {
             return;
         }
 
-        showToast("Đang dịch kỹ từng vùng chữ…");
+        showToast("Đang dịch; ô xong sẽ hiện ngay…");
 
         int generation = captureSequence;
-        List<CompletableFuture<RegionTranslation>> futures = new ArrayList<>();
-
+        Map<String, List<OcrRegion>> groupedRegions = new LinkedHashMap<>();
         for (OcrRegion region : regions) {
-            CompletableFuture<RegionTranslation> future =
-                    CompletableFuture.supplyAsync(
-                            () -> translateRegionOnline(region, generation),
-                            onlineTranslationExecutor
-                    );
-            futures.add(future);
+            groupedRegions
+                    .computeIfAbsent(region.source, ignored -> new ArrayList<>())
+                    .add(region);
         }
 
-        CompletableFuture
-                .allOf(futures.toArray(new CompletableFuture[0]))
-                .whenComplete((unused, error) -> {
-                    List<RegionTranslation> onlineResults = new ArrayList<>();
+        int requestCount = groupedRegions.size();
+        int[] completedRequests = new int[]{0};
+        int[] displayedRegions = new int[]{0};
+        int[] failedRegions = new int[]{0};
 
-                    for (CompletableFuture<RegionTranslation> future : futures) {
-                        RegionTranslation result = null;
-                        try {
-                            result = future.getNow(null);
-                        } catch (Exception ignored) {
-                            // Ô khác vẫn được hiển thị nếu một yêu cầu bị lỗi.
-                        }
+        for (List<OcrRegion> sameSourceRegions : groupedRegions.values()) {
+            OcrRegion representative = sameSourceRegions.get(0);
 
-                        if (result != null && !TextUtils.isEmpty(result.translated)) {
-                            onlineResults.add(result);
-                        }
-                    }
-
-                    int finalFailedCount = Math.max(
-                            0,
-                            regions.size() - onlineResults.size()
-                    );
-                    mainHandler.post(() -> {
+            CompletableFuture
+                    .supplyAsync(
+                            () -> translateRegionOnline(
+                                    representative,
+                                    generation
+                            ),
+                            onlineTranslationExecutor
+                    )
+                    .whenComplete((result, error) -> mainHandler.post(() -> {
                         if (cleaningUp || generation != captureSequence) {
                             return;
                         }
 
-                        int displayed = renderTranslations(onlineResults);
+                        completedRequests[0]++;
+                        String translated = result == null
+                                ? null
+                                : result.translated;
+
+                        for (OcrRegion region : sameSourceRegions) {
+                            if (!TextUtils.isEmpty(translated)
+                                    && addTranslationAtPosition(
+                                            region,
+                                            translated
+                                    )) {
+                                displayedRegions[0]++;
+                            } else {
+                                failedRegions[0]++;
+                            }
+                        }
+
+                        if (completedRequests[0] < requestCount) {
+                            updateFrozenScreenProgress(
+                                    completedRequests[0],
+                                    requestCount,
+                                    displayedRegions[0]
+                            );
+                            raiseTranslationControls();
+                            showBubble();
+                            return;
+                        }
+
                         finishOnlineTranslation(
                                 generation,
-                                displayed,
-                                finalFailedCount
+                                displayedRegions[0],
+                                failedRegions[0]
                         );
-                    });
-                });
+                    }));
+        }
     }
 
     private List<List<OcrRegion>> buildRegionBatches(List<OcrRegion> regions) {
@@ -1084,6 +1100,7 @@ public class BubbleService extends Service {
         }
 
         HttpURLConnection connection = null;
+        boolean responseConsumed = false;
         try {
             byte[] body = ("q=" + URLEncoder.encode(
                     source,
@@ -1105,7 +1122,7 @@ public class BubbleService extends Service {
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty(
                     "User-Agent",
-                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.10.1"
+                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.10.2"
             );
             connection.setFixedLengthStreamingMode(body.length);
 
@@ -1121,6 +1138,7 @@ public class BubbleService extends Service {
             String payload;
             try (InputStream inputStream = connection.getInputStream()) {
                 payload = readUtf8(inputStream);
+                responseConsumed = true;
             }
 
             JSONArray root = new JSONArray(payload);
@@ -1149,7 +1167,7 @@ public class BubbleService extends Service {
             cacheTranslation(source, result);
             return result;
         } finally {
-            if (connection != null) {
+            if (connection != null && !responseConsumed) {
                 connection.disconnect();
             }
         }
@@ -1562,7 +1580,6 @@ public class BubbleService extends Service {
         translationLayer.addView(frozenScreenView, imageParams);
 
         createFrozenScreenBar();
-        createTranslationCancelButton();
         translationsVisible = true;
         translationLayer.setVisibility(View.VISIBLE);
         translationLayer.setClickable(true);
@@ -1618,68 +1635,9 @@ public class BubbleService extends Service {
         translationLayer.addView(frozenScreenBar, barParams);
     }
 
-    private void createTranslationCancelButton() {
-        if (translationLayer == null || translationCancelButton != null) {
-            return;
-        }
-
-        translationCancelButton = new TextView(this);
-        translationCancelButton.setText("×");
-        translationCancelButton.setTextColor(Color.WHITE);
-        translationCancelButton.setTextSize(28);
-        translationCancelButton.setTypeface(Typeface.DEFAULT_BOLD);
-        translationCancelButton.setGravity(Gravity.CENTER);
-        translationCancelButton.setIncludeFontPadding(false);
-        translationCancelButton.setContentDescription("Chạm để hủy hoặc đóng bản dịch");
-        translationCancelButton.setElevation(dp(40));
-        translationCancelButton.setClickable(true);
-        translationCancelButton.setOnClickListener(view -> handleBubbleTap());
-
-        GradientDrawable background = new GradientDrawable();
-        background.setShape(GradientDrawable.OVAL);
-        background.setOrientation(GradientDrawable.Orientation.TL_BR);
-        background.setColors(new int[]{
-                Color.parseColor("#FB7185"),
-                Color.parseColor("#E11D48")
-        });
-        background.setStroke(dp(2), Color.parseColor("#D9FFFFFF"));
-        translationCancelButton.setBackground(background);
-
-        int buttonWidth = bubbleParams == null ? dp(62) : bubbleParams.width;
-        int buttonHeight = bubbleParams == null ? dp(62) : bubbleParams.height;
-        int[] layerLocation = new int[]{0, 0};
-        translationLayer.getLocationOnScreen(layerLocation);
-
-        int desiredX = bubbleParams == null
-                ? screenWidth - dp(78)
-                : bubbleParams.x;
-        int desiredY = bubbleParams == null
-                ? dp(180)
-                : bubbleParams.y;
-
-        FrameLayout.LayoutParams cancelParams = new FrameLayout.LayoutParams(
-                buttonWidth,
-                buttonHeight
-        );
-        cancelParams.leftMargin = clamp(
-                desiredX - layerLocation[0],
-                0,
-                Math.max(0, screenWidth - buttonWidth)
-        );
-        cancelParams.topMargin = clamp(
-                desiredY - layerLocation[1],
-                0,
-                Math.max(0, screenHeight - buttonHeight)
-        );
-        translationLayer.addView(translationCancelButton, cancelParams);
-    }
-
     private void raiseTranslationControls() {
         if (frozenScreenBar != null) {
             frozenScreenBar.bringToFront();
-        }
-        if (translationCancelButton != null) {
-            translationCancelButton.bringToFront();
         }
     }
 
@@ -1697,6 +1655,27 @@ public class BubbleService extends Service {
         } else {
             frozenScreenBar.setText("✦  Trung → Việt  •  Chạm để đóng ×");
         }
+        frozenScreenBar.bringToFront();
+    }
+
+    private void updateFrozenScreenProgress(
+            int completedCount,
+            int totalCount,
+            int displayedCount
+    ) {
+        if (frozenScreenBar == null || totalCount <= 0) {
+            return;
+        }
+
+        frozenScreenBar.setText(
+                "✦  Đang dịch "
+                        + completedCount
+                        + "/"
+                        + totalCount
+                        + "  •  Đã hiện "
+                        + displayedCount
+                        + " ô"
+        );
         frozenScreenBar.bringToFront();
     }
 
@@ -1737,7 +1716,6 @@ public class BubbleService extends Service {
             frozenScreenView = null;
         }
         frozenScreenBar = null;
-        translationCancelButton = null;
 
         if (frozenScreenBitmap != null && !frozenScreenBitmap.isRecycled()) {
             frozenScreenBitmap.recycle();
