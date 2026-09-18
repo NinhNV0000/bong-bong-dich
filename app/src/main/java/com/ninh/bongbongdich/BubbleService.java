@@ -68,6 +68,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -152,6 +153,8 @@ public class BubbleService extends Service {
     private ExecutorService onlineTranslationExecutor;
     private final ConcurrentHashMap<String, String> translationCache =
             new ConcurrentHashMap<>();
+    private final Set<HttpURLConnection> activeTranslationConnections =
+            ConcurrentHashMap.newKeySet();
     private volatile Map<String, String> customGlossary = new LinkedHashMap<>();
 
     private TextRecognizer textRecognizer;
@@ -174,7 +177,7 @@ public class BubbleService extends Service {
         captureThread = new HandlerThread("screen-capture");
         captureThread.start();
         captureHandler = new Handler(captureThread.getLooper());
-        onlineTranslationExecutor = Executors.newFixedThreadPool(8);
+        onlineTranslationExecutor = Executors.newFixedThreadPool(4);
         refreshCustomGlossary();
 
         textRecognizer = TextRecognition.getClient(
@@ -637,72 +640,56 @@ public class BubbleService extends Service {
             return;
         }
 
-        showToast("Đang dịch; ô xong sẽ hiện ngay…");
+        showToast("Đang dịch nhanh toàn màn hình…");
 
         int generation = captureSequence;
-        Map<String, List<OcrRegion>> groupedRegions = new LinkedHashMap<>();
-        for (OcrRegion region : regions) {
-            groupedRegions
-                    .computeIfAbsent(region.source, ignored -> new ArrayList<>())
-                    .add(region);
+        List<List<OcrRegion>> batches = buildRegionBatches(regions);
+        List<CompletableFuture<List<RegionTranslation>>> futures = new ArrayList<>();
+
+        for (List<OcrRegion> batch : batches) {
+            CompletableFuture<List<RegionTranslation>> future =
+                    CompletableFuture.supplyAsync(
+                            () -> translateBatchOnline(batch, generation),
+                            onlineTranslationExecutor
+                    );
+            futures.add(future);
         }
 
-        int requestCount = groupedRegions.size();
-        int[] completedRequests = new int[]{0};
-        int[] displayedRegions = new int[]{0};
-        int[] failedRegions = new int[]{0};
+        CompletableFuture
+                .allOf(futures.toArray(new CompletableFuture[0]))
+                .whenComplete((unused, error) -> {
+                    List<RegionTranslation> onlineResults = new ArrayList<>();
 
-        for (List<OcrRegion> sameSourceRegions : groupedRegions.values()) {
-            OcrRegion representative = sameSourceRegions.get(0);
+                    for (CompletableFuture<List<RegionTranslation>> future : futures) {
+                        List<RegionTranslation> results = null;
+                        try {
+                            results = future.getNow(null);
+                        } catch (Exception ignored) {
+                            // Các lô còn lại vẫn được hiển thị bình thường.
+                        }
 
-            CompletableFuture
-                    .supplyAsync(
-                            () -> translateRegionOnline(
-                                    representative,
-                                    generation
-                            ),
-                            onlineTranslationExecutor
-                    )
-                    .whenComplete((result, error) -> mainHandler.post(() -> {
+                        if (results != null) {
+                            onlineResults.addAll(results);
+                        }
+                    }
+
+                    int finalFailedCount = Math.max(
+                            0,
+                            regions.size() - onlineResults.size()
+                    );
+                    mainHandler.post(() -> {
                         if (cleaningUp || generation != captureSequence) {
                             return;
                         }
 
-                        completedRequests[0]++;
-                        String translated = result == null
-                                ? null
-                                : result.translated;
-
-                        for (OcrRegion region : sameSourceRegions) {
-                            if (!TextUtils.isEmpty(translated)
-                                    && addTranslationAtPosition(
-                                            region,
-                                            translated
-                                    )) {
-                                displayedRegions[0]++;
-                            } else {
-                                failedRegions[0]++;
-                            }
-                        }
-
-                        if (completedRequests[0] < requestCount) {
-                            updateFrozenScreenProgress(
-                                    completedRequests[0],
-                                    requestCount,
-                                    displayedRegions[0]
-                            );
-                            raiseTranslationControls();
-                            showBubble();
-                            return;
-                        }
-
+                        int displayed = renderTranslations(onlineResults);
                         finishOnlineTranslation(
                                 generation,
-                                displayedRegions[0],
-                                failedRegions[0]
+                                displayed,
+                                finalFailedCount
                         );
-                    }));
-        }
+                    });
+                });
     }
 
     private List<List<OcrRegion>> buildRegionBatches(List<OcrRegion> regions) {
@@ -787,7 +774,7 @@ public class BubbleService extends Service {
         Map<Integer, String> translatedParts = new HashMap<>();
         try {
             translatedParts = parseBatchTranslation(
-                    translateOnline(batchRequest.toString())
+                    translateOnline(batchRequest.toString(), generation)
             );
         } catch (Exception ignored) {
             // Nếu dịch vụ đổi định dạng, thử riêng từng ô ở dưới.
@@ -1009,17 +996,6 @@ public class BubbleService extends Service {
         return score;
     }
 
-    private String translateOnlineWithRetry(String source) throws Exception {
-        try {
-            return translateOnline(source);
-        } catch (Exception firstError) {
-            if (cleaningUp) {
-                throw firstError;
-            }
-            return translateOnline(source);
-        }
-    }
-
     private RegionTranslation translateRegionOnline(
             OcrRegion region,
             int generation
@@ -1050,57 +1026,35 @@ public class BubbleService extends Service {
             );
         }
 
-        PreparedSource preparedSource = prepareSourceForTranslation(source);
-        String bestTranslation = null;
-        int bestScore = -1000;
-
         try {
-            String translated = translateOnlineWithRetry(preparedSource.text);
-            String restored = restoreProtectedTerms(
-                    translated,
-                    preparedSource
+            String translated = translateOnline(
+                    applyCustomGlossaryToSource(source),
+                    generation
             );
-            String candidate = compactTranslation(source, restored);
-            bestTranslation = candidate;
-            bestScore = translationQualityScore(source, candidate);
+            String compact = compactTranslation(source, translated);
+            cacheTranslation(source, compact);
+            return new RegionTranslation(region, compact);
         } catch (Exception ignored) {
-            // Thử lại bằng câu gốc ở dưới nếu bản có khóa thuật ngữ bị lỗi.
-        }
-
-        if (!preparedSource.text.equals(source) && bestScore < 70) {
-            try {
-                String rawCandidate = compactTranslation(
-                        source,
-                        translateOnlineWithRetry(source)
-                );
-                int rawScore = translationQualityScore(source, rawCandidate);
-                if (rawScore > bestScore) {
-                    bestTranslation = rawCandidate;
-                    bestScore = rawScore;
-                }
-            } catch (Exception ignored) {
-                // Giữ ứng viên có khóa thuật ngữ nếu yêu cầu dự phòng thất bại.
-            }
-        }
-
-        if (cleaningUp || generation != captureSequence
-                || TextUtils.isEmpty(bestTranslation)
-                || bestScore < 15) {
             return new RegionTranslation(region, null);
         }
-
-        cacheTranslation(source, bestTranslation);
-        return new RegionTranslation(region, bestTranslation);
     }
 
-    private String translateOnline(String source) throws Exception {
+    private String translateOnline(
+            String source,
+            int generation
+    ) throws Exception {
+        if (cleaningUp
+                || generation != captureSequence
+                || Thread.currentThread().isInterrupted()) {
+            throw new IOException("Yêu cầu dịch đã bị hủy");
+        }
+
         String cached = translationCache.get(source);
         if (!TextUtils.isEmpty(cached)) {
             return cached;
         }
 
         HttpURLConnection connection = null;
-        boolean responseConsumed = false;
         try {
             byte[] body = ("q=" + URLEncoder.encode(
                     source,
@@ -1110,9 +1064,17 @@ public class BubbleService extends Service {
             connection = (HttpURLConnection) new URL(
                     ONLINE_TRANSLATE_URL
             ).openConnection();
+            activeTranslationConnections.add(connection);
+
+            if (cleaningUp
+                    || generation != captureSequence
+                    || Thread.currentThread().isInterrupted()) {
+                throw new IOException("Yêu cầu dịch đã bị hủy");
+            }
+
             connection.setRequestMethod("POST");
-            connection.setConnectTimeout(5500);
-            connection.setReadTimeout(8500);
+            connection.setConnectTimeout(4000);
+            connection.setReadTimeout(6000);
             connection.setDoOutput(true);
             connection.setInstanceFollowRedirects(true);
             connection.setRequestProperty(
@@ -1122,7 +1084,7 @@ public class BubbleService extends Service {
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty(
                     "User-Agent",
-                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.10.2"
+                    "Mozilla/5.0 (Linux; Android) BongBongDich/1.10.3-fast"
             );
             connection.setFixedLengthStreamingMode(body.length);
 
@@ -1138,7 +1100,10 @@ public class BubbleService extends Service {
             String payload;
             try (InputStream inputStream = connection.getInputStream()) {
                 payload = readUtf8(inputStream);
-                responseConsumed = true;
+            }
+
+            if (cleaningUp || generation != captureSequence) {
+                throw new IOException("Yêu cầu dịch đã bị hủy");
             }
 
             JSONArray root = new JSONArray(payload);
@@ -1167,7 +1132,8 @@ public class BubbleService extends Service {
             cacheTranslation(source, result);
             return result;
         } finally {
-            if (connection != null && !responseConsumed) {
+            if (connection != null) {
+                activeTranslationConnections.remove(connection);
                 connection.disconnect();
             }
         }
@@ -2022,10 +1988,22 @@ public class BubbleService extends Service {
         updateBubbleVisual();
     }
 
+    private void cancelActiveTranslationRequests() {
+        for (HttpURLConnection connection : activeTranslationConnections) {
+            try {
+                connection.disconnect();
+            } catch (Exception ignored) {
+                // Yêu cầu có thể vừa tự kết thúc.
+            }
+        }
+        activeTranslationConnections.clear();
+    }
+
     private void handleBubbleTap() {
         if (translationsVisible || busy) {
             boolean wasVisible = translationsVisible;
             captureSequence++;
+            cancelActiveTranslationRequests();
             captureNextFrame = false;
             busy = false;
             clearTranslations();
@@ -2049,6 +2027,7 @@ public class BubbleService extends Service {
         busy = true;
         captureNextFrame = false;
         int sequence = ++captureSequence;
+        cancelActiveTranslationRequests();
         updateBubbleVisual();
 
         hideBubble();
@@ -2451,6 +2430,7 @@ public class BubbleService extends Service {
         ImageReader newReader = createImageReader(targetWidth, targetHeight);
 
         captureSequence++;
+        cancelActiveTranslationRequests();
         busy = false;
         captureNextFrame = false;
         clearTranslations();
@@ -2643,6 +2623,7 @@ public class BubbleService extends Service {
         busy = false;
         captureNextFrame = false;
         captureSequence++;
+        cancelActiveTranslationRequests();
 
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit()

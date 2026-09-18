@@ -49,38 +49,36 @@ jobs:
             | tee signing-report.txt
 
       - name: Đổi tên APK
-        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.10.2-arm64.apk
+        run: cp app/build/outputs/apk/release/app-release.apk BongBongDich-v1.10.3-arm64.apk
 
       - name: Lưu APK trong Actions
         uses: actions/upload-artifact@v4
         with:
-          name: BongBongDich-v1.10.2-arm64
+          name: BongBongDich-v1.10.3-arm64
           path: |
-            BongBongDich-v1.10.2-arm64.apk
+            BongBongDich-v1.10.3-arm64.apk
             signing-report.txt
           if-no-files-found: error
           retention-days: 90
 
-      - name: Tạo bản phát hành v1.10.2
+      - name: Tạo bản phát hành v1.10.3
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.10.2
-          name: Bong Bóng Dịch v1.10.2
+          tag_name: v1.10.3
+          name: Bong Bóng Dịch v1.10.3
           body: |
-            Bản nâng cấp chất lượng dịch.
+            Bản ưu tiên tốc độ theo phản hồi thực tế.
 
-            - Dịch riêng từng vùng chữ song song, không ghép nhiều ô bằng mã đánh dấu nên tránh gán nhầm bản dịch.
-            - Khóa thuật ngữ chuyên ngành đã dạy trước khi gửi Google rồi phục hồi đúng cách dịch của người dùng.
-            - Tự kiểm tra chữ Trung còn sót, số bị mất và kết quả bất thường; tự thử lại khi cần.
-            - Bổ sung thuật ngữ game và tên nhân vật Naruto thường gặp.
-            - Tự nối các dòng OCR thuộc cùng một câu trước khi dịch, tránh coi phần xuống dòng là câu mới.
-            - Bỏ nút × dự phòng bị trùng; chỉ giữ một bong bóng × luôn nổi phía trên.
-            - Hiện từng ô ngay khi dịch xong, gộp chữ trùng và tăng xử lý song song để giảm thời gian chờ.
+            - Khôi phục cách gom nhiều vùng chữ vào một lượt gửi như v1.8 để giảm mạnh số yêu cầu mạng.
+            - Bỏ kiểm tra chất lượng và lần dịch lại tự động; ưu tiên hiện nhanh hơn độ sát nghĩa.
+            - Giảm từ 8 xuống 4 luồng để tránh Google giới hạn tốc độ khi gửi dồn.
+            - Khi hủy hoặc bấm dịch lại, kết nối cũ được ngắt ngay để không làm lần sau chậm dần.
+            - Giữ nguyên từ điển người dùng, giao diện ảnh dịch, xử lý xuống dòng và một bong bóng ×.
 
-            Bản này vẫn ưu tiên độ chính xác; các ô hoàn tất sẽ hiện ngay để giảm thời gian phải chờ.
+            Bản này ưu tiên tốc độ; một số câu có thể dịch kém sát nghĩa hơn v1.10.2.
 
             Bản này vẫn dùng chữ ký build tạm như các bản trước. Khi phải gỡ/cài lại,
             hãy chọn thư mục từ điển cũ để khôi phục các thuật ngữ đã dạy.
-          files: BongBongDich-v1.10.2-arm64.apk
+          files: BongBongDich-v1.10.3-arm64.apk
           make_latest: true
           overwrite_files: true
