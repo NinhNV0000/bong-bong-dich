@@ -45,6 +45,14 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
+import com.google.android.gms.tasks.Task;
+import com.google.android.gms.tasks.Tasks;
+import com.google.mlkit.common.model.DownloadConditions;
+import com.google.mlkit.nl.translate.TranslateLanguage;
+import com.google.mlkit.nl.translate.Translation;
+import com.google.mlkit.nl.translate.Translator;
+import com.google.mlkit.nl.translate.TranslatorOptions;
+
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
@@ -73,6 +81,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -158,6 +167,9 @@ public class BubbleService extends Service {
     private volatile Map<String, String> customGlossary = new LinkedHashMap<>();
 
     private TextRecognizer textRecognizer;
+    private Translator offlineTranslator;
+    private Task<Void> offlineModelDownloadTask;
+    private volatile boolean offlineModelReady;
     private volatile boolean captureNextFrame;
     private volatile boolean busy;
     private volatile boolean cleaningUp;
@@ -183,6 +195,13 @@ public class BubbleService extends Service {
         textRecognizer = TextRecognition.getClient(
                 new ChineseTextRecognizerOptions.Builder().build()
         );
+
+        TranslatorOptions translatorOptions = new TranslatorOptions.Builder()
+                .setSourceLanguage(TranslateLanguage.CHINESE)
+                .setTargetLanguage(TranslateLanguage.VIETNAMESE)
+                .build();
+        offlineTranslator = Translation.getClient(translatorOptions);
+        ensureOfflineModelDownload();
 
         createNotificationChannel();
     }
@@ -633,7 +652,137 @@ public class BubbleService extends Service {
         }
     }
 
+    private Task<Void> ensureOfflineModelDownload() {
+        if (offlineTranslator == null) {
+            return null;
+        }
+
+        if (offlineModelDownloadTask == null
+                || (offlineModelDownloadTask.isComplete()
+                && !offlineModelDownloadTask.isSuccessful())) {
+            DownloadConditions conditions =
+                    new DownloadConditions.Builder().build();
+            offlineModelDownloadTask =
+                    offlineTranslator.downloadModelIfNeeded(conditions);
+            offlineModelDownloadTask.addOnSuccessListener(
+                    unused -> offlineModelReady = true
+            );
+        }
+        return offlineModelDownloadTask;
+    }
+
     private void performRegionTranslations(List<OcrRegion> regions) {
+        if (offlineTranslator == null) {
+            performOnlineBatchTranslation(regions);
+            return;
+        }
+
+        if (offlineModelReady) {
+            performOfflineRegionTranslations(regions);
+            return;
+        }
+
+        int generation = captureSequence;
+        showToast("Đang chuẩn bị bộ dịch nhanh lần đầu…");
+        Task<Void> downloadTask = ensureOfflineModelDownload();
+
+        if (downloadTask == null) {
+            performOnlineBatchTranslation(regions);
+            return;
+        }
+
+        downloadTask
+                .addOnSuccessListener(unused -> {
+                    if (cleaningUp || generation != captureSequence) {
+                        return;
+                    }
+                    offlineModelReady = true;
+                    performOfflineRegionTranslations(regions);
+                })
+                .addOnFailureListener(exception -> {
+                    if (cleaningUp || generation != captureSequence) {
+                        return;
+                    }
+                    showToast("Chưa tải được model; tạm dùng Google.");
+                    performOnlineBatchTranslation(regions);
+                });
+    }
+
+    private void performOfflineRegionTranslations(List<OcrRegion> regions) {
+        if (offlineTranslator == null) {
+            performOnlineBatchTranslation(regions);
+            return;
+        }
+
+        showToast("Đang dịch nhanh ngay trên máy…");
+
+        int generation = captureSequence;
+        List<Task<String>> tasks = new ArrayList<>();
+        AtomicInteger displayedCount = new AtomicInteger(0);
+
+        for (OcrRegion region : regions) {
+            String source = region.source.length() > 1000
+                    ? region.source.substring(0, 1000)
+                    : region.source;
+
+            String immediate = exactCustomTranslation(source);
+            if (TextUtils.isEmpty(immediate)) {
+                immediate = exactGameTranslation(source);
+            }
+            if (TextUtils.isEmpty(immediate)) {
+                immediate = translationCache.get(source);
+            }
+
+            if (!TextUtils.isEmpty(immediate)) {
+                String compact = compactTranslation(source, immediate);
+                if (addTranslationAtPosition(region, compact)) {
+                    displayedCount.incrementAndGet();
+                }
+                continue;
+            }
+
+            String preparedSource = applyCustomGlossaryToSource(source);
+            Task<String> task = offlineTranslator.translate(preparedSource);
+            tasks.add(task);
+
+            task.addOnSuccessListener(translated -> {
+                if (cleaningUp || generation != captureSequence
+                        || TextUtils.isEmpty(translated)) {
+                    return;
+                }
+
+                String compact = compactTranslation(source, translated);
+                cacheTranslation(source, compact);
+                if (addTranslationAtPosition(region, compact)) {
+                    displayedCount.incrementAndGet();
+                }
+            });
+        }
+
+        if (tasks.isEmpty()) {
+            finishOnlineTranslation(
+                    generation,
+                    displayedCount.get(),
+                    Math.max(0, regions.size() - displayedCount.get())
+            );
+            return;
+        }
+
+        Tasks.whenAllComplete(tasks).addOnCompleteListener(unused -> {
+            if (cleaningUp || generation != captureSequence) {
+                return;
+            }
+
+            int displayed = displayedCount.get();
+            finishOnlineTranslation(
+                    generation,
+                    displayed,
+                    Math.max(0, regions.size() - displayed)
+            );
+        });
+    }
+
+    private void performOnlineBatchTranslation(List<OcrRegion> regions) {
         if (onlineTranslationExecutor == null
                 || onlineTranslationExecutor.isShutdown()) {
             showFailure("Bộ dịch online chưa sẵn sàng. Hãy bật lại bong bóng.");
@@ -2683,6 +2832,10 @@ public class BubbleService extends Service {
 
         if (textRecognizer != null) {
             textRecognizer.close();
+        }
+        if (offlineTranslator != null) {
+            offlineTranslator.close();
+            offlineTranslator = null;
         }
 
         if (captureThread != null) {

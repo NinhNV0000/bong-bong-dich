@@ -2,12 +2,12 @@
 
 Ứng dụng Android nhận chữ Trung trong game và phủ bản dịch tiếng Việt ngay tại vị trí tương ứng.
 
-## Phiên bản 1.10.3
+## Phiên bản 1.10.4
 
-- Chế độ nhanh: gom nhiều vùng OCR vào một lượt gửi như v1.8 thay vì gửi riêng từng ô.
-- Bỏ lần kiểm tra và dịch lại tự động; chấp nhận câu ít sát nghĩa hơn để giảm thời gian chờ.
-- Dùng 4 luồng ổn định, tránh gửi dồn 8 yêu cầu khiến Google giới hạn tốc độ.
-- Ngắt kết nối dịch cũ khi hủy hoặc bấm dịch lại, không để tác vụ cũ làm lần sau chậm dần.
+- Mặc định dùng bộ dịch ML Kit Trung–Việt ngay trên điện thoại như v1.0–v1.3.
+- Model chỉ tải một lần; sau đó dịch không phải chờ Google nên phản hồi liền mạch hơn.
+- Từng vùng chữ được hiện ngay khi hoàn tất, không chờ cả màn hình.
+- Nếu model chưa tải được, tự chuyển sang Google theo lô của v1.10.3.
 - Giữ từ điển chuyên ngành, nối dòng OCR, giao diện ảnh dịch và một bong bóng ×.
 - Tiếp tục lưu từ điển tại `BongBongDich/tu-dien.json`.
 - Bản vẫn dùng chữ ký build tạm như các bản trước.
